@@ -1,0 +1,2178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>DREAM HUNTER — The Endless School</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  background:#000; overflow:hidden;
+  font-family:'Courier New',monospace;
+  touch-action:none; user-select:none;
+}
+#gameCanvas { display:block; position:fixed; top:0; left:0; }
+#titleScreen {
+  position:fixed; top:0; left:0; width:100%; height:100%;
+  background:#000; display:flex; flex-direction:column;
+  align-items:center; justify-content:center; z-index:100;
+  cursor:pointer;
+}
+#titleScreen h1 {
+  color:#b0c4b1; font-size:clamp(2rem,6vw,5rem);
+  letter-spacing:0.4em; font-weight:100;
+  text-shadow:0 0 40px rgba(80,180,120,0.3);
+  animation:titlePulse 3s ease-in-out infinite;
+}
+#titleScreen h2 {
+  color:#445; font-size:clamp(0.6rem,2vw,1rem);
+  letter-spacing:0.6em; margin-top:1rem;
+  text-transform:uppercase;
+}
+#titleScreen .start {
+  color:#556; font-size:clamp(0.5rem,1.5vw,0.85rem);
+  letter-spacing:0.3em; margin-top:3rem;
+  animation:blink 2s step-end infinite;
+}
+@keyframes titlePulse {
+  0%,100%{opacity:0.7;text-shadow:0 0 20px rgba(80,180,120,0.2);}
+  50%{opacity:1;text-shadow:0 0 60px rgba(80,180,120,0.5),0 0 120px rgba(80,180,120,0.1);}
+}
+@keyframes blink { 0%,100%{opacity:1;} 50%{opacity:0;} }
+#mobileControls {
+  position:fixed; bottom:0; left:0; width:100%; height:180px;
+  display:none; z-index:20; pointer-events:all;
+}
+#leftPad { position:absolute; bottom:20px; left:20px; display:flex; gap:10px; }
+#rightPad { position:absolute; bottom:20px; right:20px; display:flex; flex-direction:column; gap:10px; align-items:flex-end; }
+.btn {
+  width:60px; height:60px; border-radius:50%;
+  background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.15);
+  display:flex; align-items:center; justify-content:center;
+  color:rgba(255,255,255,0.5); font-size:1.2rem;
+  backdrop-filter:blur(4px); cursor:pointer;
+  -webkit-tap-highlight-color:transparent;
+}
+.btn:active { background:rgba(255,255,255,0.18); }
+#btnLeft::before{content:'◀'} #btnRight::before{content:'▶'}
+#btnJump::before{content:'▲'} #btnDash::before{content:'⚡'}
+#btnCrouch::before{content:'▼'}
+#heartbeat {
+  position:fixed; bottom:20px; left:50%; transform:translateX(-50%);
+  width:60px; height:20px; pointer-events:none; z-index:15; opacity:0;
+  transition:opacity 1s;
+}
+#flashlightBar {
+  position:fixed; top:20px; left:20px; width:100px; height:4px;
+  background:rgba(255,255,255,0.1); border-radius:2px; z-index:15;
+  opacity:0; transition:opacity 1s;
+}
+#flashlightFill {
+  height:100%; border-radius:2px;
+  background:linear-gradient(90deg,#4a7c59,#8fbc8f);
+  width:100%; transition:width 0.3s;
+}
+#prompt {
+  position:fixed; bottom:80px; left:50%; transform:translateX(-50%);
+  color:rgba(200,220,200,0.7); font-size:0.75rem; letter-spacing:0.2em;
+  z-index:15; pointer-events:none; opacity:0; transition:opacity 0.5s;
+  text-shadow:0 0 10px rgba(100,200,100,0.5);
+}
+#subtitle {
+  position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);
+  color:rgba(180,180,160,0.8); font-size:clamp(0.6rem,2vw,0.9rem);
+  letter-spacing:0.3em; z-index:15; pointer-events:none;
+  opacity:0; transition:opacity 1s; text-align:center;
+  text-shadow:0 0 20px rgba(150,150,100,0.5);
+}
+</style>
+</head>
+<body>
+<canvas id="gameCanvas"></canvas>
+
+<div id="titleScreen">
+  <h1>DREAM HUNTER</h1>
+  <h2>The Endless School</h2>
+  <div class="start">— tap or click to enter —</div>
+</div>
+
+<div id="ui">
+  <div id="flashlightBar"><div id="flashlightFill"></div></div>
+  <canvas id="heartbeat" width="60" height="20"></canvas>
+  <div id="prompt"></div>
+  <div id="subtitle"></div>
+</div>
+
+<div id="mobileControls">
+  <div id="leftPad">
+    <div class="btn" id="btnLeft"></div>
+    <div class="btn" id="btnRight"></div>
+    <div class="btn" id="btnCrouch"></div>
+  </div>
+  <div id="rightPad">
+    <div class="btn" id="btnJump"></div>
+    <div class="btn" id="btnDash"></div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// DREAM HUNTER — Complete Game Engine
+// ============================================================
+
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const titleScreen = document.getElementById('titleScreen');
+const mobileControls = document.getElementById('mobileControls');
+const promptEl = document.getElementById('prompt');
+const subtitleEl = document.getElementById('subtitle');
+const flashlightFill = document.getElementById('flashlightFill');
+const heartbeatCanvas = document.getElementById('heartbeat');
+const hbCtx = heartbeatCanvas.getContext('2d');
+
+let W = canvas.width = window.innerWidth;
+let H = canvas.height = window.innerHeight;
+let gameRunning = false;
+let gameTime = 0;
+
+// ============================================================
+// AUDIO ENGINE
+// ============================================================
+class AudioEngine {
+  constructor() {
+    this.ctx = null;
+    this.master = null;
+    this.buffers = {};
+    this.sources = {};
+    this.init();
+  }
+  init() {
+    try {
+      this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+      this.master = this.ctx.createGain();
+      this.master.gain.value = 0.6;
+      this.master.connect(this.ctx.destination);
+    } catch(e) {}
+  }
+  resume() { if(this.ctx && this.ctx.state === 'suspended') this.ctx.resume(); }
+  noise(freq=200, type='sine', dur=0.5, vol=0.1, detune=0) {
+    if(!this.ctx) return;
+    try {
+      const o = this.ctx.createOscillator();
+      const g = this.ctx.createGain();
+      o.type = type;
+      o.frequency.value = freq;
+      o.detune.value = detune;
+      g.gain.setValueAtTime(0,this.ctx.currentTime);
+      g.gain.linearRampToValueAtTime(vol,this.ctx.currentTime+0.05);
+      g.gain.exponentialRampToValueAtTime(0.0001,this.ctx.currentTime+dur);
+      o.connect(g); g.connect(this.master);
+      o.start(); o.stop(this.ctx.currentTime+dur);
+    } catch(e) {}
+  }
+  whiteNoise(dur=1, vol=0.05) {
+    if(!this.ctx) return;
+    try {
+      const bufSize = this.ctx.sampleRate * dur;
+      const buf = this.ctx.createBuffer(1, bufSize, this.ctx.sampleRate);
+      const d = buf.getChannelData(0);
+      for(let i=0;i<bufSize;i++) d[i]=(Math.random()*2-1)*0.3;
+      const src = this.ctx.createBufferSource();
+      const g = this.ctx.createGain();
+      const filter = this.ctx.createBiquadFilter();
+      filter.type='lowpass'; filter.frequency.value=400;
+      src.buffer=buf; src.connect(filter); filter.connect(g); g.connect(this.master);
+      g.gain.setValueAtTime(vol,this.ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.0001,this.ctx.currentTime+dur);
+      src.start(); src.stop(this.ctx.currentTime+dur);
+    } catch(e) {}
+  }
+  drone(freq=60, vol=0.04) {
+    if(!this.ctx || this.droneNode) return;
+    try {
+      const o = this.ctx.createOscillator();
+      const o2 = this.ctx.createOscillator();
+      const g = this.ctx.createGain();
+      const filter = this.ctx.createBiquadFilter();
+      filter.type='lowpass'; filter.frequency.value=200;
+      o.type='sawtooth'; o.frequency.value=freq;
+      o2.type='sine'; o2.frequency.value=freq*1.01;
+      g.gain.value=vol;
+      o.connect(filter); o2.connect(filter); filter.connect(g); g.connect(this.master);
+      o.start(); o2.start();
+      this.droneNode={o,o2,g};
+    } catch(e) {}
+  }
+  footstep() {
+    this.whiteNoise(0.08, 0.03);
+    this.noise(80,'sine',0.08,0.06);
+  }
+  knock() {
+    this.noise(120,'square',0.3,0.08);
+    setTimeout(()=>this.noise(110,'square',0.25,0.06),150);
+    setTimeout(()=>this.noise(115,'square',0.2,0.07),270);
+  }
+  bell() {
+    this.noise(440,'sine',2,0.12);
+    this.noise(880,'sine',1.5,0.06);
+    this.noise(1320,'sine',1,0.04);
+  }
+  heartbeat(rate=1) {
+    this.noise(40,'sine',0.15,0.2);
+    setTimeout(()=>this.noise(35,'sine',0.1,0.15),150);
+  }
+  glitch() {
+    for(let i=0;i<3;i++) setTimeout(()=>this.noise(Math.random()*2000+200,'square',0.05,0.08),i*30);
+  }
+  whisper() { this.whiteNoise(1.5, 0.025); }
+  drip() { this.noise(800,'sine',0.4,0.04,-1200); }
+  creak() {
+    if(!this.ctx) return;
+    try {
+      const o = this.ctx.createOscillator();
+      const g = this.ctx.createGain();
+      o.type='sawtooth';
+      o.frequency.setValueAtTime(300,this.ctx.currentTime);
+      o.frequency.exponentialRampToValueAtTime(150,this.ctx.currentTime+0.4);
+      g.gain.setValueAtTime(0.06,this.ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.0001,this.ctx.currentTime+0.4);
+      o.connect(g); g.connect(this.master);
+      o.start(); o.stop(this.ctx.currentTime+0.4);
+    } catch(e) {}
+  }
+  distantScream() {
+    if(!this.ctx) return;
+    try {
+      const o = this.ctx.createOscillator();
+      const g = this.ctx.createGain();
+      const rev = this.ctx.createConvolver();
+      o.type='sawtooth';
+      o.frequency.setValueAtTime(600,this.ctx.currentTime);
+      o.frequency.linearRampToValueAtTime(300,this.ctx.currentTime+2);
+      g.gain.setValueAtTime(0,this.ctx.currentTime);
+      g.gain.linearRampToValueAtTime(0.05,this.ctx.currentTime+0.2);
+      g.gain.exponentialRampToValueAtTime(0.0001,this.ctx.currentTime+2.5);
+      o.connect(g); g.connect(this.master);
+      o.start(); o.stop(this.ctx.currentTime+2.5);
+    } catch(e) {}
+  }
+}
+
+const audio = new AudioEngine();
+
+// ============================================================
+// PARTICLE SYSTEM
+// ============================================================
+class Particle {
+  constructor(x,y,vx,vy,life,size,color,type='dust') {
+    this.x=x; this.y=y; this.vx=vx; this.vy=vy;
+    this.life=life; this.maxLife=life;
+    this.size=size; this.color=color; this.type=type;
+  }
+  update(dt) {
+    this.x+=this.vx*dt; this.y+=this.vy*dt;
+    this.life-=dt;
+    if(this.type==='dust') this.vy-=0.5*dt;
+    if(this.type==='rain') this.vy+=80*dt;
+  }
+  draw(ctx, camX, camY) {
+    const a = Math.max(0,this.life/this.maxLife);
+    ctx.save();
+    ctx.globalAlpha=a*0.6;
+    ctx.fillStyle=this.color;
+    if(this.type==='rain') {
+      ctx.fillRect(this.x-camX,this.y-camY,1,4);
+    } else {
+      ctx.beginPath();
+      ctx.arc(this.x-camX,this.y-camY,this.size,0,Math.PI*2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+}
+
+class ParticleSystem {
+  constructor() { this.particles=[]; }
+  add(p) { this.particles.push(p); }
+  dust(x,y) {
+    for(let i=0;i<2;i++) {
+      this.add(new Particle(
+        x+Math.random()*40-20, y+Math.random()*10-5,
+        (Math.random()-0.5)*8, -Math.random()*5-1,
+        Math.random()*3+2, Math.random()*1.5+0.3,
+        `rgba(${150+Math.random()*50},${160+Math.random()*40},${140+Math.random()*30},0.4)`,
+        'dust'
+      ));
+    }
+  }
+  rainDrop(x,y) {
+    this.add(new Particle(x,y,(Math.random()-0.5)*10,50,Math.random()*2+1,1,'rgba(100,130,160,0.5)','rain'));
+  }
+  update(dt) {
+    this.particles=this.particles.filter(p=>{p.update(dt);return p.life>0;});
+  }
+  draw(ctx,cx,cy) { this.particles.forEach(p=>p.draw(ctx,cx,cy)); }
+}
+
+// ============================================================
+// WORLD / MAP
+// ============================================================
+const TILE=48;
+
+// Room types
+const ROOM_TYPES = {
+  HALLWAY:'hallway', CLASSROOM:'classroom', LIBRARY:'library',
+  GYM:'gym', NURSE:'nurse', UNDERGROUND:'underground',
+  FLOODED:'flooded', STAIRCASE:'staircase', LOBBY:'lobby'
+};
+
+class Room {
+  constructor(id,x,y,w,h,type,name) {
+    this.id=id; this.x=x; this.y=y; this.w=w; this.h=h;
+    this.type=type; this.name=name;
+    this.platforms=[]; this.lights=[]; this.props=[];
+    this.connections=[];
+    this.visited=false; this.visitCount=0;
+    this.anomalyTriggered=false;
+    this.hasWater=type===ROOM_TYPES.FLOODED;
+    this.gravity=1;
+  }
+  get left(){return this.x;}
+  get right(){return this.x+this.w;}
+  get top(){return this.y;}
+  get bottom(){return this.y+this.h;}
+  get centerX(){return this.x+this.w/2;}
+  get centerY(){return this.y+this.h/2;}
+}
+
+class WorldMap {
+  constructor() {
+    this.rooms=[];
+    this.platforms=[];
+    this.lights=[];
+    this.props=[];
+    this.doors=[];
+    this.keys=[];
+    this.signs=[];
+    this.build();
+  }
+
+  build() {
+    // Build a large interconnected school world
+    // Units in pixels. Tile = 48px.
+    const T=TILE;
+
+    // LOBBY - entry point
+    this.addRoom(0, 0, -T*8, T*20, T*10, ROOM_TYPES.LOBBY, 'Main Lobby');
+    // HALLWAY 1 - right of lobby
+    this.addRoom(1, T*20, -T*8, T*30, T*10, ROOM_TYPES.HALLWAY, 'East Corridor');
+    // CLASSROOM 1 - above hallway1
+    this.addRoom(2, T*22, -T*18, T*14, T*10, ROOM_TYPES.CLASSROOM, 'Room 101');
+    // CLASSROOM 2 - further right
+    this.addRoom(3, T*36, -T*18, T*14, T*10, ROOM_TYPES.CLASSROOM, 'Room 102');
+    // HALLWAY 2 - continues right
+    this.addRoom(4, T*50, -T*8, T*25, T*10, ROOM_TYPES.HALLWAY, 'West Wing Corridor');
+    // LIBRARY - large room right
+    this.addRoom(5, T*75, -T*8, T*22, T*12, ROOM_TYPES.LIBRARY, 'Library');
+    // STAIRCASE - going down
+    this.addRoom(6, T*40, -T*8, T*10, T*18, ROOM_TYPES.STAIRCASE, 'Stairwell');
+    // UNDERGROUND HALLWAY
+    this.addRoom(7, T*20, T*10, T*55, T*10, ROOM_TYPES.UNDERGROUND, 'Basement Corridor');
+    // FLOODED CLASSROOM
+    this.addRoom(8, T*20, T*20, T*20, T*12, ROOM_TYPES.FLOODED, 'Flooded Room B1');
+    // GYM HALL - massive
+    this.addRoom(9, T*40, T*10, T*35, T*20, ROOM_TYPES.GYM, 'Gymnasium');
+    // NURSE ROOM
+    this.addRoom(10, T*75, T*10, T*14, T*10, ROOM_TYPES.NURSE, 'Nurse\'s Office');
+    // SECOND FLOOR HALLWAY (above lobby)
+    this.addRoom(11, -T*5, -T*20, T*25, T*10, ROOM_TYPES.HALLWAY, 'Upper West Corridor');
+    // ART ROOM
+    this.addRoom(12, -T*5, -T*30, T*16, T*10, ROOM_TYPES.CLASSROOM, 'Art Room');
+
+    // PLATFORMS per room
+    this.buildRoomGeometry();
+
+    // Lights
+    this.buildLights();
+
+    // Props (lockers, desks, etc.)
+    this.buildProps();
+
+    // Doors & Keys
+    this.buildDoorsAndKeys();
+
+    // Signs
+    this.buildSigns();
+
+    // Rain drip points (in flooded/broken rooms)
+    this.dripPoints = [];
+    const r8 = this.rooms[8];
+    for(let i=0;i<6;i++) this.dripPoints.push({x:r8.x+T*3+i*T*2.5, y:r8.y});
+  }
+
+  addRoom(id,x,y,w,h,type,name) {
+    const r=new Room(id,x,y,w,h,type,name);
+    this.rooms.push(r);
+    return r;
+  }
+
+  buildRoomGeometry() {
+    const T=TILE;
+    // For each room, create floor, ceiling, walls, and internal platforms
+    this.rooms.forEach((r,i)=>{
+      // Floor
+      this.platforms.push({x:r.x,y:r.y+r.h-T,w:r.w,h:T,solid:true,room:r.id,type:'floor'});
+      // Ceiling (some rooms have broken ceilings)
+      if(r.type!==ROOM_TYPES.STAIRCASE) {
+        this.platforms.push({x:r.x,y:r.y,w:r.w,h:T,solid:true,room:r.id,type:'ceiling'});
+      }
+      // Left wall
+      this.platforms.push({x:r.x,y:r.y,w:T,h:r.h,solid:true,room:r.id,type:'wall'});
+      // Right wall
+      this.platforms.push({x:r.x+r.w-T,y:r.y,w:T,h:r.h,solid:true,room:r.id,type:'wall'});
+    });
+
+    // Room-specific internal geometry
+    // Lobby
+    this.platforms.push({x:T*2,y:-T*2,w:T*3,h:T,solid:true,type:'ledge'});
+    this.platforms.push({x:T*12,y:-T*4,w:T*4,h:T,solid:true,type:'ledge'});
+
+    // Hallway platforms (broken floor sections create interest)
+    this.platforms.push({x:T*25,y:-T*4,w:T*5,h:T,solid:true,type:'ledge'});
+    this.platforms.push({x:T*38,y:-T*4,w:T*4,h:T,solid:true,type:'ledge'});
+
+    // Classroom 1 - desks as platforms
+    for(let i=0;i<3;i++) {
+      this.platforms.push({x:T*24+i*T*4,y:-T*11,w:T*2.5,h:T*0.5,solid:true,type:'desk'});
+    }
+    this.platforms.push({x:T*24,y:-T*14,w:T*3,h:T,solid:true,type:'bookshelf'});
+
+    // Library platforms
+    for(let i=0;i<4;i++) {
+      this.platforms.push({x:T*77+i*T*4,y:-T*3-i*T*1.5,w:T*3,h:T,solid:true,type:'shelf'});
+    }
+    this.platforms.push({x:T*77,y:-T*10,w:T*5,h:T,solid:true,type:'shelf'});
+    this.platforms.push({x:T*87,y:-T*12,w:T*7,h:T,solid:true,type:'shelf'});
+
+    // Staircase - actual stairs
+    for(let i=0;i<6;i++) {
+      this.platforms.push({x:T*41+i*T,y:-T*5+i*T*2,w:T*2,h:T*0.4,solid:true,type:'stair'});
+    }
+
+    // Gym - equipment
+    this.platforms.push({x:T*45,y:T*15,w:T*5,h:T,solid:true,type:'bleacher'});
+    this.platforms.push({x:T*52,y:T*13,w:T*5,h:T,solid:true,type:'bleacher'});
+    this.platforms.push({x:T*60,y:T*18,w:T*8,h:T*2,solid:true,type:'stage'});
+    this.platforms.push({x:T*48,y:T*17,w:T*3,h:T,solid:true,type:'box'});
+
+    // Underground - pipes and debris
+    this.platforms.push({x:T*28,y:T*15,w:T*4,h:T,solid:true,type:'pipe'});
+    this.platforms.push({x:T*45,y:T*14,w:T*3,h:T,solid:true,type:'debris'});
+    this.platforms.push({x:T*58,y:T*15,w:T*5,h:T,solid:true,type:'pipe'});
+
+    // Flooded - submerged platforms
+    this.platforms.push({x:T*23,y:T*27,w:T*3,h:T,solid:true,type:'debris'});
+    this.platforms.push({x:T*30,y:T*25,w:T*4,h:T,solid:true,type:'shelf'});
+    this.platforms.push({x:T*36,y:T*27,w:T*3,h:T,solid:true,type:'debris'});
+
+    // Upper hallway
+    this.platforms.push({x:-T*2,y:-T*14,w:T*4,h:T,solid:true,type:'ledge'});
+    this.platforms.push({x:T*8,y:-T*14,w:T*5,h:T,solid:true,type:'ledge'});
+
+    // Art room
+    this.platforms.push({x:-T*2,y:-T*24,w:T*4,h:T,solid:true,type:'table'});
+  }
+
+  buildLights() {
+    const T=TILE;
+    const flickerRoom=[1,4,7]; // hallways flicker
+
+    // Ceiling lights in rooms
+    const lightPositions=[
+      {x:T*5,y:-T*6,r:T*6,intense:0.6,flicker:false},
+      {x:T*10,y:-T*6,r:T*5,intense:0.4,flicker:false},
+      {x:T*25,y:-T*5,r:T*7,intense:0.5,flicker:true},
+      {x:T*35,y:-T*5,r:T*5,intense:0.3,flicker:true},
+      {x:T*45,y:-T*5,r:T*6,intense:0.4,flicker:false},
+      {x:T*55,y:-T*5,r:T*5,intense:0.5,flicker:true},
+      {x:T*63,y:-T*5,r:T*6,intense:0.4,flicker:false},
+      {x:T*78,y:-T*4,r:T*8,intense:0.35,flicker:false},
+      {x:T*88,y:-T*4,r:T*6,intense:0.3,flicker:true},
+      {x:T*95,y:-T*4,r:T*5,intense:0.25,flicker:false},
+      // classroom
+      {x:T*27,y:-T*14,r:T*5,intense:0.4,flicker:true},
+      {x:T*32,y:-T*14,r:T*5,intense:0.3,flicker:false},
+      {x:T*39,y:-T*14,r:T*4,intense:0.3,flicker:true},
+      // basement
+      {x:T*28,y:T*14,r:T*5,intense:0.25,flicker:true},
+      {x:T*42,y:T*14,r:T*4,intense:0.2,flicker:true},
+      {x:T*56,y:T*14,r:T*4,intense:0.25,flicker:false},
+      {x:T*68,y:T*14,r:T*4,intense:0.2,flicker:true},
+      // gym
+      {x:T*50,y:T*14,r:T*9,intense:0.35,flicker:false},
+      {x:T*62,y:T*14,r:T*8,intense:0.3,flicker:true},
+      {x:T*70,y:T*14,r:T*7,intense:0.25,flicker:false},
+      // nurse
+      {x:T*80,y:T*13,r:T*5,intense:0.45,flicker:false},
+      // upper
+      {x:T*1,y:-T*17,r:T*5,intense:0.3,flicker:true},
+      {x:T*12,y:-T*17,r:T*4,intense:0.35,flicker:false},
+      // red warning lights
+      {x:T*40,y:-T*7,r:T*3,intense:0.4,flicker:true,color:'#ff2200'},
+      {x:T*75,y:T*12,r:T*3,intense:0.35,flicker:true,color:'#ff2200'},
+    ];
+    this.lights=lightPositions.map((l,i)=>({
+      ...l, id:i,
+      flickerTimer:Math.random()*100,
+      flickerState:1, flickerSpeed:Math.random()*0.3+0.05,
+      color:l.color||'#ffe8a0',
+      off:false, offTimer:0
+    }));
+  }
+
+  buildProps() {
+    const T=TILE;
+    this.props=[
+      // Lockers in hallways
+      ...this.makeLockers(T*22,  -T*7, 8),
+      ...this.makeLockers(T*52,  -T*7, 6),
+      ...this.makeLockers(T*97,  -T*7, 4),
+      // Desks in classrooms
+      ...this.makeDesks(T*23, -T*12, 4),
+      ...this.makeDesks(T*37, -T*12, 4),
+      // Bookshelves in library
+      ...this.makeShelves(T*77, -T*6, 5),
+      // Hospital bed in nurse
+      {type:'bed', x:T*77,y:T*11,w:T*4,h:T*2},
+      {type:'cabinet',x:T*83,y:T*11,w:T*2,h:T*3},
+      // Gym equipment
+      {type:'hoop',x:T*44,y:T*11,w:T*2,h:T*5},
+      {type:'hoop',x:T*71,y:T*11,w:T*2,h:T*5},
+      // Mannequins (horror)
+      {type:'mannequin',x:T*30,y:-T*6.5,w:T,h:T*2.5,id:'m1',facing:1},
+      {type:'mannequin',x:T*60,y:-T*6.5,w:T,h:T*2.5,id:'m2',facing:-1},
+      {type:'mannequin',x:T*85,y:-T*6,w:T,h:T*2.5,id:'m3',facing:1},
+      // Blackboard
+      {type:'blackboard',x:T*23,y:-T*17,w:T*8,h:T*3},
+      {type:'blackboard',x:T*37,y:-T*17,w:T*8,h:T*3},
+      // Clock
+      {type:'clock',x:T*8,y:-T*5,w:T*1.5,h:T*1.5},
+      {type:'clock',x:T*55,y:-T*5,w:T*1.5,h:T*1.5},
+    ];
+
+    // Water surface for flooded room
+    this.waterLevel = T*24;
+    this.waterY = T*24;
+  }
+
+  makeLockers(startX, y, count) {
+    const T=TILE;
+    const arr=[];
+    for(let i=0;i<count;i++) {
+      arr.push({type:'locker',x:startX+i*T*1.2,y,w:T,h:T*2.5,open:Math.random()<0.3});
+    }
+    return arr;
+  }
+
+  makeDesks(startX, y, count) {
+    const T=TILE;
+    const arr=[];
+    for(let i=0;i<count;i++) {
+      arr.push({type:'desk',x:startX+i*T*3,y,w:T*2,h:T,row:0});
+      arr.push({type:'chair',x:startX+i*T*3+T*0.3,y:y+T*0.8,w:T,h:T*0.8});
+    }
+    return arr;
+  }
+
+  makeShelves(startX, y, count) {
+    const T=TILE;
+    const arr=[];
+    for(let i=0;i<count;i++) {
+      arr.push({type:'bookshelf',x:startX+i*T*4,y,w:T*3,h:T*4});
+    }
+    return arr;
+  }
+
+  buildDoorsAndKeys() {
+    const T=TILE;
+    this.doors=[
+      {id:'d1',x:T*20-T*0.8,y:-T*5.5,w:T*0.8,h:T*2.5,locked:false,open:false,room1:0,room2:1},
+      {id:'d2',x:T*50-T*0.8,y:-T*5.5,w:T*0.8,h:T*2.5,locked:false,open:false,room1:1,room2:4},
+      {id:'d3',x:T*75-T*0.8,y:-T*5.5,w:T*0.8,h:T*2.5,locked:true,open:false,room1:4,room2:5},
+      {id:'d4',x:T*75-T*0.8,y:T*12,w:T*0.8,h:T*2.5,locked:false,open:false,room1:7,room2:10},
+      {id:'d5',x:T*20,y:T*10-T*0.8,w:T*2,h:T*0.8,locked:true,open:false,room1:7,room2:8},
+    ];
+    this.keys=[
+      {id:'k1',x:T*88,y:-T*2,w:T*0.8,h:T*0.4,collected:false,unlocks:'d3',color:'#c8a84b'},
+      {id:'k2',x:T*32,y:T*23,w:T*0.8,h:T*0.4,collected:false,unlocks:'d5',color:'#4b8ac8'},
+    ];
+  }
+
+  buildSigns() {
+    const T=TILE;
+    this.signs=[
+      {x:T*0.5,y:-T*4,text:'MAIN LOBBY'},
+      {x:T*21,y:-T*4,text:'EAST WING →'},
+      {x:T*50,y:-T*4,text:'← ROOMS | LIBRARY →'},
+      {x:T*75,y:-T*4,text:'LIBRARY'},
+      {x:T*40,y:-T*4,text:'↓ BASEMENT'},
+      {x:T*20,y:T*11,text:'BASEMENT B1'},
+      {x:T*75,y:T*11,text:"NURSE'S OFFICE"},
+    ];
+  }
+
+  getRoomAt(x,y) {
+    return this.rooms.find(r=>x>=r.x&&x<=r.right&&y>=r.y&&y<=r.bottom);
+  }
+}
+
+// ============================================================
+// CAMERA
+// ============================================================
+class Camera {
+  constructor() {
+    this.x=0; this.y=0;
+    this.targetX=0; this.targetY=0;
+    this.shakeX=0; this.shakeY=0;
+    this.shakeIntensity=0;
+    this.zoom=1; this.targetZoom=1;
+    this.lag=0.08;
+    this.horrorZoom=false;
+    this.zoomTimer=0;
+  }
+  update(playerX, playerY, dt) {
+    this.targetX = playerX - W/2;
+    this.targetY = playerY - H/2 + H*0.1;
+    const lag = this.lag;
+    this.x += (this.targetX - this.x) * lag * 60 * dt;
+    this.y += (this.targetY - this.y) * lag * 60 * dt;
+
+    // Zoom
+    this.zoom += (this.targetZoom - this.zoom) * 0.05 * 60 * dt;
+
+    // Shake decay
+    this.shakeIntensity *= Math.pow(0.85, 60*dt);
+    if(this.shakeIntensity < 0.01) this.shakeIntensity=0;
+    this.shakeX = (Math.random()-0.5)*this.shakeIntensity;
+    this.shakeY = (Math.random()-0.5)*this.shakeIntensity;
+  }
+  shake(intensity=8) { this.shakeIntensity=Math.max(this.shakeIntensity,intensity); }
+  horrorZoomIn() { this.targetZoom=1.08; this.horrorZoom=true; }
+  horrorZoomOut() { this.targetZoom=1; this.horrorZoom=false; }
+  get screenX() { return this.x + this.shakeX; }
+  get screenY() { return this.y + this.shakeY; }
+}
+
+// ============================================================
+// PLAYER
+// ============================================================
+class Player {
+  constructor(x,y) {
+    this.x=x; this.y=y;
+    this.vx=0; this.vy=0;
+    this.w=18; this.h=36;
+    this.onGround=false;
+    this.onWall=false;
+    this.wallDir=0;
+    this.facing=1;
+    this.crouching=false;
+    this.dashing=false;
+    this.dashTimer=0;
+    this.dashCooldown=0;
+    this.coyoteTimer=0;
+    this.jumpBuffer=0;
+    this.animFrame=0;
+    this.animTimer=0;
+    this.landTimer=0;
+    this.breathPhase=0;
+    this.footTimer=0;
+    this.speed=180;
+    this.jumpForce=520;
+    this.gravity=900;
+    this.maxFall=800;
+    this.dashForce=600;
+    this.dashDur=0.12;
+    this.alive=true;
+    this.flashlightAngle=0;
+    this.flashlightTarget=0;
+    this.stress=0;
+    this.heartbeatTimer=0;
+    this.panicMode=false;
+  }
+
+  update(input, platforms, dt) {
+    if(!this.alive) return;
+
+    // Breathing
+    this.breathPhase+=dt*1.2;
+
+    // Dash
+    if(this.dashing) {
+      this.dashTimer-=dt;
+      if(this.dashTimer<=0) { this.dashing=false; this.vx*=0.2; }
+    }
+
+    // Dash input
+    if(input.dash && this.dashCooldown<=0 && !this.dashing) {
+      this.dashing=true;
+      this.dashTimer=this.dashDur;
+      this.dashCooldown=0.8;
+      this.vx=this.facing*this.dashForce;
+      this.vy=-80;
+      audio.whiteNoise(0.1, 0.06);
+      input.dash=false;
+    }
+    this.dashCooldown-=dt;
+
+    // Coyote time
+    if(this.onGround) this.coyoteTimer=0.12;
+    else this.coyoteTimer-=dt;
+
+    // Jump buffer
+    if(input.jump) { this.jumpBuffer=0.12; input.jump=false; }
+    this.jumpBuffer-=dt;
+
+    // Horizontal movement
+    if(!this.dashing) {
+      const targetVX = (input.left?-1:0)+(input.right?1:0);
+      const spd = this.crouching ? this.speed*0.4 : this.speed;
+      if(targetVX!==0) {
+        this.facing=targetVX;
+        const accel=800;
+        this.vx+=(targetVX*spd-this.vx)*Math.min(1,accel*dt/spd);
+      } else {
+        const friction = this.onGround ? 0.08 : 0.25;
+        this.vx*=Math.pow(friction, dt*60*0.3);
+        if(Math.abs(this.vx)<2) this.vx=0;
+      }
+    }
+
+    // Jump
+    if(this.jumpBuffer>0) {
+      if(this.coyoteTimer>0) {
+        this.vy=-this.jumpForce;
+        this.coyoteTimer=0;
+        this.jumpBuffer=0;
+        audio.noise(120,'sine',0.15,0.08);
+      } else if(this.onWall) {
+        this.vy=-this.jumpForce*0.85;
+        this.vx=-this.wallDir*this.speed*1.2;
+        this.jumpBuffer=0;
+        audio.noise(100,'sine',0.12,0.07);
+      }
+    }
+
+    // Gravity
+    const grav = this.panicMode ? this.gravity*1.3 : this.gravity;
+    this.vy+=grav*dt;
+    if(this.vy>this.maxFall) this.vy=this.maxFall;
+
+    // Wall slide
+    if(this.onWall && this.vy>0 && !this.onGround) {
+      this.vy=Math.min(this.vy, 120);
+    }
+
+    // Move & Collide
+    this.x+=this.vx*dt;
+    this.y+=this.vy*dt;
+    this.resolveCollisions(platforms);
+
+    // Crouch
+    if(input.crouch && this.onGround && !this.crouching) {
+      this.crouching=true;
+      this.h=22;
+      this.y+=14;
+    } else if(!input.crouch && this.crouching) {
+      this.crouching=false;
+      this.h=36;
+      this.y-=14;
+    }
+
+    // Footsteps
+    if(this.onGround && Math.abs(this.vx)>40) {
+      this.footTimer-=dt;
+      if(this.footTimer<=0) {
+        audio.footstep();
+        this.footTimer=this.crouching?0.4:0.28;
+      }
+    }
+
+    // Flashlight angle
+    this.flashlightTarget=input.mouseAngle!==undefined ? input.mouseAngle : (this.facing>0?0:-Math.PI);
+    this.flashlightAngle+=(this.flashlightTarget-this.flashlightAngle)*0.15*60*dt;
+
+    // Animation
+    this.animTimer+=dt;
+    if(this.onGround && Math.abs(this.vx)>20) {
+      if(this.animTimer>0.1) { this.animFrame=(this.animFrame+1)%4; this.animTimer=0; }
+    } else { this.animFrame=0; }
+
+    // Land effect
+    this.landTimer-=dt;
+
+    // Stress & heartbeat
+    if(this.stress>0) {
+      this.stress-=dt*0.05;
+      this.heartbeatTimer-=dt;
+      if(this.heartbeatTimer<=0) {
+        audio.heartbeat();
+        this.heartbeatTimer=1.2-this.stress*0.8;
+      }
+    }
+    this.panicMode=this.stress>0.7;
+  }
+
+  resolveCollisions(platforms) {
+    this.onGround=false;
+    this.onWall=false;
+    this.wallDir=0;
+
+    for(const p of platforms) {
+      if(!p.solid) continue;
+      const ox=this.x+this.w/2-(p.x+p.w/2);
+      const oy=this.y+this.h/2-(p.y+p.h/2);
+      const hw=this.w/2+p.w/2;
+      const hh=this.h/2+p.h/2;
+      if(Math.abs(ox)<hw && Math.abs(oy)<hh) {
+        const dx=hw-Math.abs(ox);
+        const dy=hh-Math.abs(oy);
+        if(dx<dy) {
+          this.x+=ox>0?dx:-dx;
+          this.vx=0;
+          this.onWall=true;
+          this.wallDir=ox>0?-1:1;
+        } else {
+          if(oy<0) { this.y-=dy; if(this.vy>0){this.vy=0; this.onGround=true; this.landTimer=0.15;} }
+          else { this.y+=dy; if(this.vy<0) this.vy=0; }
+        }
+      }
+    }
+  }
+
+  draw(ctx, camX, camY, gameTime) {
+    const sx = this.x - camX;
+    const sy = this.y - camY;
+    const breathY = Math.sin(this.breathPhase)*1.5;
+
+    ctx.save();
+    ctx.translate(sx+this.w/2, sy+this.h/2+breathY);
+    if(this.facing<0) ctx.scale(-1,1);
+
+    // Shadow
+    ctx.save();
+    ctx.translate(0, this.h/2+2);
+    const sgx=ctx.createRadialGradient(0,0,1,0,0,this.w*1.5);
+    sgx.addColorStop(0,'rgba(0,0,0,0.4)');
+    sgx.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=sgx;
+    ctx.scale(1.5,0.4);
+    ctx.beginPath(); ctx.arc(0,0,this.w,0,Math.PI*2); ctx.fill();
+    ctx.restore();
+
+    // Body (silhouette child figure)
+    const runOff = this.onGround&&Math.abs(this.vx)>20 ? Math.sin(this.animFrame*Math.PI/2)*3 : 0;
+    const crouchScale = this.crouching ? 0.7 : 1;
+
+    ctx.scale(1, crouchScale);
+
+    // Coat/body
+    ctx.fillStyle='#1a1a2e';
+    ctx.beginPath();
+    ctx.roundRect(-this.w/2, -this.h/2+runOff*0.3, this.w, this.h*0.65, [3,3,0,0]);
+    ctx.fill();
+
+    // Legs
+    ctx.fillStyle='#111122';
+    if(this.onGround&&Math.abs(this.vx)>20) {
+      const lr=Math.sin(this.animTimer*Math.PI*2/0.4)*8;
+      ctx.fillRect(-this.w/2+1,-this.h/2+this.h*0.55,this.w/2-1,this.h*0.45+lr*0.3);
+      ctx.fillRect(1,-this.h/2+this.h*0.55,this.w/2-1,this.h*0.45-lr*0.3);
+    } else {
+      ctx.fillRect(-this.w/2+1,-this.h/2+this.h*0.55,this.w-2,this.h*0.45);
+    }
+
+    // Head
+    ctx.fillStyle='#1a1a2e';
+    ctx.beginPath();
+    ctx.ellipse(0,-this.h/2-4,this.w/2-1,this.h/6+1,0,0,Math.PI*2);
+    ctx.fill();
+
+    // Eyes glow (subtle)
+    ctx.fillStyle='rgba(180,220,180,0.6)';
+    ctx.beginPath();
+    ctx.ellipse(this.w/4,-this.h/2-4,1.5,1.5,0,0,Math.PI*2);
+    ctx.fill();
+
+    // Flashlight beam (drawn as line from hand)
+    if(!this.crouching) {
+      ctx.save();
+      ctx.rotate(this.flashlightAngle);
+      const beamG=ctx.createLinearGradient(0,0,180,0);
+      beamG.addColorStop(0,'rgba(220,210,160,0.35)');
+      beamG.addColorStop(1,'rgba(220,210,160,0)');
+      ctx.fillStyle=beamG;
+      ctx.beginPath();
+      ctx.moveTo(this.w/2,0);
+      ctx.lineTo(180,-45);
+      ctx.lineTo(180,45);
+      ctx.closePath();
+      ctx.fill();
+      // Flashlight source
+      ctx.fillStyle='rgba(255,240,180,0.9)';
+      ctx.beginPath();
+      ctx.arc(this.w/2,0,3,0,Math.PI*2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    ctx.restore();
+  }
+}
+
+// ============================================================
+// ENTITY — THE WATCHER
+// ============================================================
+class TheWatcher {
+  constructor() {
+    this.x=2000; this.y=-T*6;
+    this.visible=false;
+    this.alpha=0;
+    this.targetAlpha=0;
+    this.w=TILE; this.h=TILE*3.5;
+    this.phase='idle'; // idle,approach,retreat
+    this.phaseTimer=0;
+    this.spawnTimer=Math.random()*60+30;
+    this.distortRadius=300;
+    this.blinkTimer=0;
+    this.animPhase=0;
+    this.spawnX=0; this.spawnY=0;
+  }
+
+  update(player, camera, dt) {
+    this.animPhase+=dt;
+    this.blinkTimer-=dt;
+    this.spawnTimer-=dt;
+
+    if(this.spawnTimer<=0 && !this.visible) {
+      this.spawn(player);
+    }
+
+    if(this.visible) {
+      this.phaseTimer-=dt;
+      this.alpha+=(this.targetAlpha-this.alpha)*0.05*60*dt;
+
+      const dist = Math.hypot(player.x-this.x, player.y-this.y);
+
+      if(this.phase==='idle') {
+        // Face player, stand still
+        if(this.phaseTimer<=0) {
+          if(dist<400) this.phase='approach';
+          else this.phase='retreat';
+          this.phaseTimer=Math.random()*3+2;
+        }
+      } else if(this.phase==='approach') {
+        const dx=player.x-this.x;
+        this.x+=Math.sign(dx)*40*dt;
+        if(Math.abs(dx)<80 || this.phaseTimer<=0) {
+          this.phase='retreat';
+          this.phaseTimer=2;
+          camera.shake(12);
+          audio.distantScream();
+        }
+      } else if(this.phase==='retreat') {
+        if(this.phaseTimer<=0) {
+          this.visible=false;
+          this.targetAlpha=0;
+          this.spawnTimer=Math.random()*90+60;
+          camera.horrorZoomOut();
+        }
+      }
+
+      // Effect on player when near
+      if(dist<400) {
+        player.stress=Math.min(1, player.stress+(1-dist/400)*dt*0.3);
+        camera.horrorZoomIn();
+        if(dist<200) camera.shake(3);
+      }
+    } else {
+      this.alpha*=Math.pow(0.9,dt*60);
+    }
+  }
+
+  spawn(player) {
+    // Spawn behind player in direction they came from
+    const offX = (Math.random()<0.5?-1:1)*W*0.7;
+    this.x = player.x + offX;
+    this.y = player.y - TILE*2;
+    this.visible=true;
+    this.targetAlpha=0.85;
+    this.phase='idle';
+    this.phaseTimer=Math.random()*4+3;
+    audio.creak();
+    setTimeout(()=>audio.whisper(),800);
+  }
+
+  draw(ctx, camX, camY, gameTime) {
+    if(this.alpha<0.02) return;
+    const sx=this.x-camX-this.w/2;
+    const sy=this.y-camY-this.h+8;
+    ctx.save();
+    ctx.globalAlpha=this.alpha;
+
+    // Distorted humanoid silhouette
+    const wobble=Math.sin(this.animPhase*2.3)*3;
+    const stretchY=1+Math.sin(this.animPhase*1.1)*0.05;
+
+    ctx.translate(sx+this.w/2, sy+this.h);
+    ctx.scale(1,stretchY);
+    ctx.translate(-this.w/2,-this.h);
+
+    // Body shadow blob
+    const grad=ctx.createRadialGradient(this.w/2,this.h/2,5,this.w/2,this.h/2,this.h);
+    grad.addColorStop(0,'rgba(0,0,0,0.95)');
+    grad.addColorStop(0.5,'rgba(5,5,10,0.8)');
+    grad.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=grad;
+    ctx.beginPath();
+    ctx.ellipse(this.w/2,this.h/2,this.w*0.8,this.h/2,0,0,Math.PI*2);
+    ctx.fill();
+
+    // Torso
+    ctx.fillStyle='rgba(2,2,8,0.95)';
+    ctx.beginPath();
+    ctx.moveTo(this.w*0.2,this.h*0.3);
+    ctx.lineTo(this.w*0.8,this.h*0.3);
+    ctx.lineTo(this.w*0.75+wobble,this.h*0.72);
+    ctx.lineTo(this.w*0.6,this.h);
+    ctx.lineTo(this.w*0.4,this.h);
+    ctx.lineTo(this.w*0.25-wobble,this.h*0.72);
+    ctx.closePath();
+    ctx.fill();
+
+    // Head (elongated, wrong proportions)
+    ctx.beginPath();
+    ctx.ellipse(this.w/2,this.h*0.15,this.w*0.28,this.h*0.2+Math.sin(this.animPhase)*2,0,0,Math.PI*2);
+    ctx.fill();
+
+    // Arms (too long)
+    ctx.strokeStyle='rgba(2,2,8,0.9)';
+    ctx.lineWidth=6;
+    ctx.lineCap='round';
+    const armSway=Math.sin(this.animPhase*0.8)*8;
+    ctx.beginPath();
+    ctx.moveTo(this.w*0.2,this.h*0.35);
+    ctx.quadraticCurveTo(-this.w*0.3,this.h*0.6+armSway,this.w*0.1,this.h*0.85);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(this.w*0.8,this.h*0.35);
+    ctx.quadraticCurveTo(this.w*1.3,this.h*0.6-armSway,this.w*0.9,this.h*0.85);
+    ctx.stroke();
+
+    // Eyes — white dots
+    if(Math.sin(this.animPhase*3)>-0.7) {
+      ctx.fillStyle='rgba(220,220,200,0.8)';
+      ctx.beginPath(); ctx.arc(this.w*0.38,this.h*0.13,2.5,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(this.w*0.62,this.h*0.13,2.5,0,Math.PI*2); ctx.fill();
+    }
+
+    ctx.restore();
+  }
+}
+
+// ============================================================
+// HORROR EVENTS
+// ============================================================
+class HorrorSystem {
+  constructor(world) {
+    this.world=world;
+    this.events=[];
+    this.eventTimer=Math.random()*20+15;
+    this.backgroundEyes=[];
+    this.glitchTimer=0;
+    this.glitchIntensity=0;
+    this.lightOffTimer=0;
+    this.allLightsOff=false;
+    this.screenBlur=0;
+    this.mannequinMoved=false;
+    this.mannequinTimer=Math.random()*120+60;
+    this.doorVanishTimer=Math.random()*180+120;
+    this.loopHallwayActive=false;
+    this.subtitleQueue=[];
+    this.subtitleTimer=0;
+  }
+
+  update(player, camera, dt, gameTime) {
+    this.eventTimer-=dt;
+    this.glitchTimer-=dt;
+    this.glitchIntensity*=Math.pow(0.9,dt*60);
+    this.screenBlur*=Math.pow(0.95,dt*60);
+
+    // Ambient events
+    if(this.eventTimer<=0) {
+      this.triggerRandomEvent(player, camera);
+      this.eventTimer=Math.random()*25+10;
+    }
+
+    // Mannequin movement
+    this.mannequinTimer-=dt;
+    if(this.mannequinTimer<=0) {
+      this.moveMannequin(camera);
+      this.mannequinTimer=Math.random()*90+45;
+    }
+
+    // Subtitle display
+    this.subtitleTimer-=dt;
+    if(this.subtitleTimer<=0 && this.subtitleQueue.length>0) {
+      const msg=this.subtitleQueue.shift();
+      showSubtitle(msg.text, msg.dur||3);
+      this.subtitleTimer=msg.dur||3;
+    }
+
+    // Background eyes
+    this.backgroundEyes=this.backgroundEyes.filter(e=>{
+      e.life-=dt;
+      e.alpha=Math.min(1,e.life)*0.6;
+      return e.life>0;
+    });
+  }
+
+  triggerRandomEvent(player, camera) {
+    const roll=Math.random();
+    if(roll<0.15) {
+      // Knock
+      audio.knock();
+      this.glitchIntensity=0.3;
+      camera.shake(2);
+    } else if(roll<0.28) {
+      // Bell
+      audio.bell();
+      this.glitchIntensity=0.5;
+      camera.shake(4);
+      this.queueSubtitle('*school bell rings in the distance*',2);
+    } else if(roll<0.38) {
+      // Lights off
+      this.flickerAllLights();
+    } else if(roll<0.48) {
+      // Whisper
+      audio.whisper();
+      this.queueSubtitle('...find the way out...',3);
+    } else if(roll<0.58) {
+      // Background eyes
+      this.spawnEyes(player);
+    } else if(roll<0.65) {
+      // Distant scream
+      audio.distantScream();
+      camera.shake(5);
+      this.queueSubtitle('*something screams in another room*',2);
+    } else if(roll<0.72) {
+      // Creak
+      audio.creak();
+    } else if(roll<0.78) {
+      // Drip
+      audio.drip();
+    } else if(roll<0.85) {
+      // Screen glitch
+      this.glitchIntensity=0.8;
+      audio.glitch();
+      camera.shake(6);
+    } else if(roll<0.90) {
+      // Screen blur
+      this.screenBlur=15;
+      player.stress=Math.min(1,player.stress+0.15);
+    } else {
+      // Drip loop
+      for(let i=0;i<3;i++) setTimeout(()=>audio.drip(), i*400);
+    }
+  }
+
+  flickerAllLights() {
+    this.world.lights.forEach(l=>{
+      l.off=true;
+      l.offTimer=Math.random()*2+0.5;
+    });
+    setTimeout(()=>{
+      this.world.lights.forEach(l=>{ l.off=false; });
+    }, (Math.random()*2+0.5)*1000);
+    audio.glitch();
+  }
+
+  moveMannequin(camera) {
+    const m=this.world.props.filter(p=>p.type==='mannequin');
+    if(m.length===0) return;
+    const target=m[Math.floor(Math.random()*m.length)];
+    const prevFacing=target.facing;
+    target.facing*=-1;
+    target.x+=target.facing*(TILE*2);
+    camera.shake(1);
+    // Subtle audio
+    audio.creak();
+  }
+
+  spawnEyes(player) {
+    for(let i=0;i<Math.floor(Math.random()*3+2);i++) {
+      this.backgroundEyes.push({
+        x:player.x+(Math.random()-0.5)*W*0.8,
+        y:player.y+(Math.random()-0.5)*H*0.5-H*0.1,
+        life:Math.random()*4+2,
+        alpha:0,
+        size:Math.random()*3+1.5,
+      });
+    }
+  }
+
+  queueSubtitle(text, dur=3) {
+    this.subtitleQueue.push({text,dur});
+  }
+
+  drawGlitch(ctx) {
+    if(this.glitchIntensity<0.05) return;
+    ctx.save();
+    const strips=Math.floor(this.glitchIntensity*8)+1;
+    for(let i=0;i<strips;i++) {
+      const y=Math.random()*H;
+      const h=Math.random()*20+2;
+      const offset=(Math.random()-0.5)*this.glitchIntensity*40;
+      const imgData=ctx.getImageData(0,y,W,h);
+      ctx.putImageData(imgData,offset,y);
+    }
+    // Chromatic aberration
+    ctx.globalCompositeOperation='screen';
+    ctx.globalAlpha=this.glitchIntensity*0.15;
+    ctx.fillStyle='rgba(255,0,0,0.5)';
+    ctx.fillRect(this.glitchIntensity*3,0,W,H);
+    ctx.fillStyle='rgba(0,0,255,0.5)';
+    ctx.fillRect(-this.glitchIntensity*3,0,W,H);
+    ctx.restore();
+  }
+
+  drawEyes(ctx, camX, camY) {
+    this.backgroundEyes.forEach(e=>{
+      const sx=e.x-camX;
+      const sy=e.y-camY;
+      ctx.save();
+      ctx.globalAlpha=e.alpha;
+      ctx.fillStyle='rgba(180,200,150,0.8)';
+      ctx.beginPath(); ctx.ellipse(sx-e.size*2,sy,e.size,e.size*0.6,0,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(sx+e.size*2,sy,e.size,e.size*0.6,0,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle='rgba(0,0,0,0.9)';
+      ctx.beginPath(); ctx.arc(sx-e.size*2,sy,e.size*0.4,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(sx+e.size*2,sy,e.size*0.4,0,Math.PI*2); ctx.fill();
+      ctx.restore();
+    });
+  }
+}
+
+// ============================================================
+// RENDERER
+// ============================================================
+class Renderer {
+  constructor() {
+    this.filmGrainCanvas=document.createElement('canvas');
+    this.fgCtx=this.filmGrainCanvas.getContext('2d');
+    this.filmGrainCanvas.width=256; this.filmGrainCanvas.height=256;
+    this.grainTimer=0;
+    this.fogLayers=[
+      {x:0,speed:0.15,alpha:0.12,y:0.6},
+      {x:500,speed:0.08,alpha:0.08,y:0.4},
+      {x:-300,speed:0.22,alpha:0.07,y:0.75},
+    ];
+    this.rainDrops=[];
+    this.rainTimer=0;
+  }
+
+  updateGrain() {
+    const d=this.fgCtx.createImageData(256,256);
+    for(let i=0;i<d.data.length;i+=4) {
+      const v=Math.random()*40;
+      d.data[i]=v; d.data[i+1]=v; d.data[i+2]=v;
+      d.data[i+3]=Math.random()*30+10;
+    }
+    this.fgCtx.putImageData(d,0,0);
+  }
+
+  drawBackground(ctx, camX, camY, gameTime) {
+    // Deep black void
+    ctx.fillStyle='#080810';
+    ctx.fillRect(0,0,W,H);
+
+    // Parallax background layers
+    const px1=camX*0.1;
+    const px2=camX*0.2;
+
+    // Far background - vague building shapes
+    ctx.fillStyle='rgba(10,10,20,0.95)';
+    for(let i=-2;i<W/200+3;i++) {
+      const bx=i*220-((px1)%220);
+      const bh=80+Math.sin(i*1.3)*40;
+      ctx.fillRect(bx,H-bh,200,bh);
+    }
+
+    // Mid parallax - dark walls
+    ctx.fillStyle='rgba(12,14,22,0.9)';
+    ctx.fillRect(0,0,W,H);
+  }
+
+  drawRoom(ctx, room, camX, camY, gameTime) {
+    const rx=room.x-camX;
+    const ry=room.y-camY;
+
+    // Floor material
+    ctx.save();
+    const floorColors={
+      [ROOM_TYPES.HALLWAY]:'#1a1c25',
+      [ROOM_TYPES.CLASSROOM]:'#191c20',
+      [ROOM_TYPES.LIBRARY]:'#16181f',
+      [ROOM_TYPES.GYM]:'#1c1a16',
+      [ROOM_TYPES.NURSE]:'#1a1f1f',
+      [ROOM_TYPES.UNDERGROUND]:'#111318',
+      [ROOM_TYPES.FLOODED]:'#111520',
+      [ROOM_TYPES.STAIRCASE]:'#161820',
+      [ROOM_TYPES.LOBBY]:'#1a1c25',
+    };
+    ctx.fillStyle=floorColors[room.type]||'#1a1a1a';
+    ctx.fillRect(rx,ry,room.w,room.h);
+
+    // Wall texture - subtle vertical lines
+    ctx.strokeStyle='rgba(30,32,45,0.4)';
+    ctx.lineWidth=1;
+    const spacing=TILE*1.5;
+    for(let xi=rx%spacing;xi<rx+room.w;xi+=spacing) {
+      ctx.beginPath();
+      ctx.moveTo(xi,ry);
+      ctx.lineTo(xi,ry+room.h);
+      ctx.stroke();
+    }
+
+    // Ceiling stain / damage
+    if(room.type===ROOM_TYPES.HALLWAY||room.type===ROOM_TYPES.UNDERGROUND) {
+      for(let si=0;si<4;si++) {
+        const sx=rx+room.w*(si+0.1)/4;
+        const stainG=ctx.createRadialGradient(sx,ry+TILE,5,sx,ry+TILE,TILE*1.5);
+        stainG.addColorStop(0,'rgba(30,40,30,0.3)');
+        stainG.addColorStop(1,'rgba(0,0,0,0)');
+        ctx.fillStyle=stainG;
+        ctx.fillRect(rx,ry,room.w,TILE*2);
+      }
+    }
+
+    // Flooded room water
+    if(room.hasWater) {
+      const waterY=ry+room.h*0.55;
+      const waterG=ctx.createLinearGradient(0,waterY,0,ry+room.h);
+      waterG.addColorStop(0,'rgba(20,40,60,0.7)');
+      waterG.addColorStop(1,'rgba(10,20,35,0.9)');
+      ctx.fillStyle=waterG;
+      ctx.fillRect(rx,waterY,room.w,room.h-(waterY-ry));
+
+      // Water ripples
+      ctx.strokeStyle='rgba(60,90,120,0.3)';
+      ctx.lineWidth=1;
+      for(let ri=0;ri<4;ri++) {
+        const riphase=gameTime*0.5+ri*Math.PI/2;
+        ctx.beginPath();
+        ctx.ellipse(rx+room.w*(ri+1)/5,waterY+10,30+Math.sin(riphase)*5,4,0,0,Math.PI*2);
+        ctx.stroke();
+      }
+    }
+
+    // Room-specific details
+    if(room.type===ROOM_TYPES.GYM) {
+      // Floor markings
+      ctx.strokeStyle='rgba(80,60,20,0.25)';
+      ctx.lineWidth=2;
+      ctx.strokeRect(rx+TILE*2,ry+room.h-TILE*1.5,room.w-TILE*4,TILE*0.5);
+      ctx.beginPath();
+      ctx.arc(rx+room.w/2,ry+room.h-TILE*1.2,TILE*2,0,Math.PI*2);
+      ctx.stroke();
+    }
+
+    if(room.type===ROOM_TYPES.NURSE) {
+      // White tile lines
+      ctx.strokeStyle='rgba(40,50,45,0.4)';
+      ctx.lineWidth=0.5;
+      for(let ti=0;ti<room.w/TILE;ti++) {
+        ctx.beginPath(); ctx.moveTo(rx+ti*TILE,ry); ctx.lineTo(rx+ti*TILE,ry+room.h); ctx.stroke();
+      }
+      for(let ti=0;ti<room.h/TILE;ti++) {
+        ctx.beginPath(); ctx.moveTo(rx,ry+ti*TILE); ctx.lineTo(rx+room.w,ry+ti*TILE); ctx.stroke();
+      }
+    }
+
+    ctx.restore();
+  }
+
+  drawPlatform(ctx, p, camX, camY, gameTime) {
+    const px=p.x-camX; const py=p.y-camY;
+    ctx.save();
+
+    const colors={
+      'floor':'#1e2030', 'ceiling':'#161820',
+      'wall':'#1a1c28', 'ledge':'#242630',
+      'desk':'#3a2a1a', 'stair':'#252830',
+      'shelf':'#2a2015', 'bookshelf':'#2a2015',
+      'pipe':'#1a2a1a', 'debris':'#222222',
+      'bleacher':'#2a2520', 'stage':'#201a10',
+      'box':'#2a2010', 'table':'#2a1a10',
+    };
+    ctx.fillStyle=colors[p.type]||'#1e2030';
+    ctx.fillRect(px,py,p.w,p.h);
+
+    // Edge highlight
+    ctx.fillStyle='rgba(60,65,90,0.2)';
+    ctx.fillRect(px,py,p.w,1);
+    ctx.fillStyle='rgba(0,0,0,0.4)';
+    ctx.fillRect(px,py+p.h-2,p.w,2);
+
+    // Pipe pattern
+    if(p.type==='pipe') {
+      ctx.strokeStyle='rgba(40,80,40,0.4)';
+      ctx.lineWidth=2;
+      for(let i=0;i<p.w;i+=TILE) {
+        ctx.beginPath(); ctx.moveTo(px+i,py); ctx.lineTo(px+i,py+p.h); ctx.stroke();
+      }
+    }
+
+    ctx.restore();
+  }
+
+  drawProp(ctx, prop, camX, camY, gameTime) {
+    const px=prop.x-camX; const py=prop.y-camY;
+    ctx.save();
+
+    switch(prop.type) {
+      case 'locker':
+        ctx.fillStyle=prop.open?'#1a1e2a':'#1e2235';
+        ctx.fillRect(px,py,prop.w,prop.h);
+        ctx.strokeStyle='rgba(60,70,100,0.4)';
+        ctx.lineWidth=1;
+        ctx.strokeRect(px,py,prop.w,prop.h);
+        ctx.strokeRect(px+2,py+2,prop.w-4,prop.h-4);
+        // Handle
+        ctx.fillStyle='rgba(80,90,110,0.6)';
+        ctx.fillRect(px+prop.w/2-2,py+prop.h/2-4,4,8);
+        if(prop.open) {
+          ctx.fillStyle='rgba(0,0,0,0.8)';
+          ctx.fillRect(px,py,prop.w*0.4,prop.h);
+        }
+        break;
+
+      case 'desk':
+        ctx.fillStyle='#2a2010';
+        ctx.fillRect(px,py,prop.w,prop.h*0.15);
+        ctx.fillStyle='#201808';
+        ctx.fillRect(px+2,py+prop.h*0.15,prop.w-4,prop.h*0.7);
+        break;
+
+      case 'chair':
+        ctx.fillStyle='#1a1208';
+        ctx.fillRect(px+prop.w*0.1,py,prop.w*0.8,prop.h*0.15);
+        ctx.fillRect(px+prop.w*0.1,py+prop.h*0.15,prop.w*0.15,prop.h*0.85);
+        ctx.fillRect(px+prop.w*0.75,py+prop.h*0.15,prop.w*0.15,prop.h*0.85);
+        break;
+
+      case 'bookshelf':
+        ctx.fillStyle='#241a08';
+        ctx.fillRect(px,py,prop.w,prop.h);
+        // Books
+        for(let shelf=0;shelf<3;shelf++) {
+          const sy=py+prop.h*0.1+shelf*(prop.h*0.28);
+          let bx=px+4;
+          while(bx<px+prop.w-4) {
+            const bw=8+Math.floor(Math.random()*8);
+            const bookColors=['#3a1a1a','#1a2a3a','#2a3a1a','#3a3a1a','#2a1a3a'];
+            ctx.fillStyle=bookColors[Math.floor(Math.random()*bookColors.length)];
+            ctx.fillRect(bx,sy,bw,prop.h*0.22);
+            bx+=bw+1;
+          }
+        }
+        break;
+
+      case 'mannequin':
+        // Unsettling mannequin figure
+        ctx.save();
+        if(prop.facing<0) { ctx.translate(px+prop.w/2,py+prop.h/2); ctx.scale(-1,1); ctx.translate(-prop.w/2,-prop.h/2); }
+        ctx.fillStyle='#c8c0b0';
+        // Head
+        ctx.beginPath(); ctx.ellipse(px+prop.w/2,py+prop.h*0.08,prop.w*0.25,prop.h*0.1,0,0,Math.PI*2); ctx.fill();
+        // Body
+        ctx.beginPath();
+        ctx.moveTo(px+prop.w*0.25,py+prop.h*0.18);
+        ctx.lineTo(px+prop.w*0.75,py+prop.h*0.18);
+        ctx.lineTo(px+prop.w*0.65,py+prop.h*0.55);
+        ctx.lineTo(px+prop.w*0.35,py+prop.h*0.55);
+        ctx.closePath(); ctx.fill();
+        // Arms (wrong position for horror)
+        ctx.fillRect(px+prop.w*0.75,py+prop.h*0.2,prop.w*0.5,prop.h*0.05);
+        ctx.fillRect(px-prop.w*0.25,py+prop.h*0.2,prop.w*0.5,prop.h*0.05);
+        // Legs
+        ctx.fillRect(px+prop.w*0.3,py+prop.h*0.55,prop.w*0.15,prop.h*0.45);
+        ctx.fillRect(px+prop.w*0.55,py+prop.h*0.55,prop.w*0.15,prop.h*0.45);
+        // Face features (blank, unsettling)
+        ctx.fillStyle='rgba(0,0,0,0.3)';
+        ctx.beginPath(); ctx.ellipse(px+prop.w*0.42,py+prop.h*0.07,3,3,0,0,Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(px+prop.w*0.58,py+prop.h*0.07,3,3,0,0,Math.PI*2); ctx.fill();
+        ctx.restore();
+        break;
+
+      case 'blackboard':
+        ctx.fillStyle='#0a1208';
+        ctx.fillRect(px,py,prop.w,prop.h);
+        ctx.strokeStyle='rgba(40,60,35,0.5)';
+        ctx.lineWidth=2;
+        ctx.strokeRect(px,py,prop.w,prop.h);
+        // Chalk text (spooky)
+        ctx.fillStyle='rgba(180,190,170,0.15)';
+        ctx.font=`${TILE*0.3}px 'Courier New'`;
+        ctx.fillText('WHERE AM I',px+10,py+prop.h*0.4);
+        ctx.fillStyle='rgba(180,190,170,0.08)';
+        ctx.fillText('FIND THE KEY',px+10,py+prop.h*0.7);
+        break;
+
+      case 'clock':
+        ctx.fillStyle='#1a1810';
+        ctx.beginPath(); ctx.arc(px+prop.w/2,py+prop.h/2,prop.w/2,0,Math.PI*2); ctx.fill();
+        ctx.strokeStyle='rgba(80,75,50,0.5)';
+        ctx.lineWidth=1;
+        ctx.stroke();
+        // Hands stopped
+        ctx.strokeStyle='rgba(120,110,80,0.7)';
+        ctx.lineWidth=2; ctx.lineCap='round';
+        ctx.beginPath();
+        ctx.moveTo(px+prop.w/2,py+prop.h/2);
+        ctx.lineTo(px+prop.w/2,py+prop.h*0.2);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(px+prop.w/2,py+prop.h/2);
+        ctx.lineTo(px+prop.w*0.75,py+prop.h/2);
+        ctx.stroke();
+        break;
+
+      case 'bed':
+        ctx.fillStyle='#1e2020';
+        ctx.fillRect(px,py,prop.w,prop.h);
+        ctx.fillStyle='#2a2828';
+        ctx.fillRect(px+4,py+4,prop.w-8,prop.h*0.6);
+        // Bloodstain suggestion
+        ctx.fillStyle='rgba(60,10,10,0.3)';
+        ctx.beginPath();
+        ctx.ellipse(px+prop.w*0.4,py+prop.h*0.3,prop.w*0.2,prop.h*0.15,0,0,Math.PI*2);
+        ctx.fill();
+        break;
+
+      case 'cabinet':
+        ctx.fillStyle='#e8e0d0';
+        ctx.fillRect(px,py,prop.w,prop.h);
+        ctx.strokeStyle='rgba(180,170,150,0.6)';
+        ctx.lineWidth=1;
+        ctx.strokeRect(px,py,prop.w,prop.h);
+        ctx.strokeRect(px+3,py+3,prop.w-6,prop.h/2-3);
+        ctx.strokeRect(px+3,py+prop.h/2,prop.w-6,prop.h/2-3);
+        break;
+
+      case 'hoop':
+        ctx.strokeStyle='rgba(100,90,60,0.5)';
+        ctx.lineWidth=3;
+        ctx.beginPath(); ctx.moveTo(px+prop.w/2,py); ctx.lineTo(px+prop.w/2,py+prop.h*0.6); ctx.stroke();
+        ctx.strokeStyle='rgba(140,120,60,0.5)';
+        ctx.beginPath(); ctx.arc(px+prop.w/2,py+prop.h*0.65,TILE*0.8,0,Math.PI*2); ctx.stroke();
+        break;
+    }
+
+    ctx.restore();
+  }
+
+  drawLight(ctx, light, camX, camY, gameTime) {
+    if(light.off) return;
+
+    const lx=light.x-camX;
+    const ly=light.y-camY;
+
+    // Flicker
+    let fk=1;
+    if(light.flicker) {
+      light.flickerTimer+=0.05;
+      fk=0.7+Math.sin(light.flickerTimer*8)*0.15+Math.sin(light.flickerTimer*13)*0.08;
+      fk=Math.max(0.2,Math.min(1,fk));
+      // Occasional stutter
+      if(Math.random()<0.005) fk=Math.random()*0.3;
+    }
+
+    const intense=light.intense*fk;
+    const r=light.r*fk;
+    const col=light.color||'#ffe8a0';
+
+    ctx.save();
+    ctx.globalCompositeOperation='screen';
+    const grad=ctx.createRadialGradient(lx,ly,0,lx,ly,r);
+    const rgb=hexToRgb(col);
+    grad.addColorStop(0,`rgba(${rgb.r},${rgb.g},${rgb.b},${intense})`);
+    grad.addColorStop(0.4,`rgba(${rgb.r},${rgb.g},${rgb.b},${intense*0.3})`);
+    grad.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=grad;
+    ctx.fillRect(lx-r,ly-r,r*2,r*2);
+
+    // Light fixture
+    ctx.globalCompositeOperation='source-over';
+    ctx.fillStyle=`rgba(${rgb.r},${rgb.g},${rgb.b},${intense*0.9})`;
+    ctx.fillRect(lx-4,ly-3,8,4);
+    ctx.restore();
+  }
+
+  drawDoor(ctx, door, camX, camY) {
+    if(!door.visible && door.visible!==undefined) return;
+    const dx=door.x-camX; const dy=door.y-camY;
+    ctx.save();
+    ctx.fillStyle=door.locked?'#1a1020':'#201820';
+    ctx.fillRect(dx,dy,door.w,door.h);
+    ctx.strokeStyle=door.locked?'rgba(120,30,30,0.6)':'rgba(60,70,90,0.5)';
+    ctx.lineWidth=2;
+    ctx.strokeRect(dx,dy,door.w,door.h);
+    // Lock indicator
+    if(door.locked) {
+      ctx.fillStyle='rgba(160,40,40,0.7)';
+      ctx.beginPath();
+      ctx.arc(dx+door.w/2,dy+door.h*0.45,5,0,Math.PI*2);
+      ctx.fill();
+      ctx.fillRect(dx+door.w/2-4,dy+door.h*0.45,8,7);
+    } else {
+      ctx.fillStyle='rgba(80,90,110,0.5)';
+      ctx.fillRect(dx+door.w/2-2,dy+door.h*0.4,4,8);
+    }
+    ctx.restore();
+  }
+
+  drawKey(ctx, key, camX, camY, gameTime) {
+    if(key.collected) return;
+    const kx=key.x-camX; const ky=key.y-camY;
+    ctx.save();
+    const bob=Math.sin(gameTime*2)*3;
+    ctx.translate(kx+key.w/2,ky+key.h/2+bob);
+    // Glow
+    ctx.globalCompositeOperation='screen';
+    const g=ctx.createRadialGradient(0,0,1,0,0,20);
+    const rgb=hexToRgb(key.color);
+    g.addColorStop(0,`rgba(${rgb.r},${rgb.g},${rgb.b},0.4)`);
+    g.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=g;
+    ctx.fillRect(-20,-20,40,40);
+    ctx.globalCompositeOperation='source-over';
+    ctx.fillStyle=key.color;
+    ctx.beginPath();
+    ctx.arc(0,0,5,0,Math.PI*2);
+    ctx.fill();
+    ctx.fillRect(3,-1.5,12,3);
+    ctx.fillRect(10,-1.5,3,5);
+    ctx.fillRect(14,-1.5,3,5);
+    ctx.restore();
+  }
+
+  drawDarkness(ctx, camX, camY, flashlightX, flashlightY, flashlightAngle, flashlightRadius=220) {
+    ctx.save();
+    // Draw full darkness
+    ctx.fillStyle='rgba(0,0,0,0.92)';
+    ctx.fillRect(0,0,W,H);
+
+    // Cut out flashlight cone
+    ctx.globalCompositeOperation='destination-out';
+    const fx=flashlightX-camX;
+    const fy=flashlightY-camY;
+    const angle=flashlightAngle;
+    const spread=Math.PI/4.5;
+
+    const coneGrad=ctx.createRadialGradient(fx,fy,5,fx,fy,flashlightRadius);
+    coneGrad.addColorStop(0,'rgba(0,0,0,1)');
+    coneGrad.addColorStop(0.6,'rgba(0,0,0,0.8)');
+    coneGrad.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=coneGrad;
+
+    ctx.beginPath();
+    ctx.moveTo(fx,fy);
+    ctx.arc(fx,fy,flashlightRadius,angle-spread,angle+spread);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  drawFog(ctx, camX, camY, gameTime) {
+    ctx.save();
+    ctx.globalCompositeOperation='screen';
+    this.fogLayers.forEach(fog=>{
+      fog.x+=fog.speed;
+      const fx=(fog.x-camX*fog.speed*2)%W;
+      const fy=H*fog.y-camY*0.05;
+      const g=ctx.createLinearGradient(fx,fy,fx+W*1.5,fy+50);
+      g.addColorStop(0,'rgba(0,0,0,0)');
+      g.addColorStop(0.3,`rgba(15,20,30,${fog.alpha})`);
+      g.addColorStop(0.7,`rgba(10,15,25,${fog.alpha*0.7})`);
+      g.addColorStop(1,'rgba(0,0,0,0)');
+      ctx.fillStyle=g;
+      ctx.fillRect(fx-200,fy,W*2,60);
+      ctx.fillRect(fx-200+W,fy,W*2,60);
+    });
+    ctx.restore();
+  }
+
+  drawFilmGrain(ctx) {
+    this.grainTimer++;
+    if(this.grainTimer%2===0) this.updateGrain();
+    ctx.save();
+    ctx.globalAlpha=0.06;
+    ctx.globalCompositeOperation='screen';
+    for(let x=0;x<W;x+=256) for(let y=0;y<H;y+=256) {
+      ctx.drawImage(this.filmGrainCanvas,x,y);
+    }
+    ctx.restore();
+  }
+
+  drawVignette(ctx) {
+    ctx.save();
+    const g=ctx.createRadialGradient(W/2,H/2,H*0.2,W/2,H/2,H*0.85);
+    g.addColorStop(0,'rgba(0,0,0,0)');
+    g.addColorStop(0.5,'rgba(0,0,0,0.1)');
+    g.addColorStop(1,'rgba(0,0,0,0.7)');
+    ctx.fillStyle=g;
+    ctx.fillRect(0,0,W,H);
+    ctx.restore();
+  }
+
+  drawSign(ctx, sign, camX, camY) {
+    const sx=sign.x-camX;
+    const sy=sign.y-camY;
+    ctx.save();
+    ctx.fillStyle='rgba(30,30,40,0.8)';
+    ctx.strokeStyle='rgba(80,80,100,0.4)';
+    ctx.lineWidth=1;
+    const tw=sign.text.length*7+16;
+    ctx.fillRect(sx,sy-22,tw,20);
+    ctx.strokeRect(sx,sy-22,tw,20);
+    ctx.fillStyle='rgba(140,150,130,0.6)';
+    ctx.font='10px Courier New';
+    ctx.fillText(sign.text,sx+8,sy-8);
+    ctx.restore();
+  }
+
+  drawRain(ctx, camX, camY, gameTime) {
+    ctx.save();
+    ctx.strokeStyle='rgba(80,110,140,0.25)';
+    ctx.lineWidth=0.8;
+    for(let i=0;i<30;i++) {
+      const rx=((i*137+gameTime*200)%W);
+      const ry=((i*89+gameTime*180)%H);
+      ctx.beginPath();
+      ctx.moveTo(rx,ry);
+      ctx.lineTo(rx+2,ry+8);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+
+// ============================================================
+// INPUT
+// ============================================================
+class Input {
+  constructor() {
+    this.left=false; this.right=false;
+    this.jump=false; this.dash=false; this.crouch=false;
+    this.interact=false;
+    this.mouseX=W/2; this.mouseY=H/2;
+    this.mouseAngle=0;
+    this.touchIds={};
+    this.bind();
+  }
+  bind() {
+    document.addEventListener('keydown',e=>{
+      switch(e.code) {
+        case'ArrowLeft': case'KeyA': this.left=true; break;
+        case'ArrowRight': case'KeyD': this.right=true; break;
+        case'ArrowUp': case'KeyW': case'Space': this.jump=true; e.preventDefault(); break;
+        case'ArrowDown': case'KeyS': this.crouch=true; break;
+        case'ShiftLeft': case'ShiftRight': this.dash=true; break;
+        case'KeyE': this.interact=true; break;
+      }
+    });
+    document.addEventListener('keyup',e=>{
+      switch(e.code) {
+        case'ArrowLeft': case'KeyA': this.left=false; break;
+        case'ArrowRight': case'KeyD': this.right=false; break;
+        case'ArrowDown': case'KeyS': this.crouch=false; break;
+      }
+    });
+    document.addEventListener('mousemove',e=>{
+      this.mouseX=e.clientX; this.mouseY=e.clientY;
+    });
+    // Mobile buttons
+    this.bindBtn('btnLeft',  ()=>this.left=true,  ()=>this.left=false);
+    this.bindBtn('btnRight', ()=>this.right=true, ()=>this.right=false);
+    this.bindBtn('btnJump',  ()=>this.jump=true,  ()=>{});
+    this.bindBtn('btnDash',  ()=>this.dash=true,  ()=>{});
+    this.bindBtn('btnCrouch',()=>this.crouch=true,()=>this.crouch=false);
+  }
+  bindBtn(id, onStart, onEnd) {
+    const el=document.getElementById(id);
+    if(!el) return;
+    el.addEventListener('touchstart',e=>{ e.preventDefault(); onStart(); },{passive:false});
+    el.addEventListener('touchend',e=>{ e.preventDefault(); onEnd(); },{passive:false});
+    el.addEventListener('mousedown',onStart);
+    el.addEventListener('mouseup',onEnd);
+  }
+  updateMouseAngle(playerX,playerY,camX,camY) {
+    const px=playerX-camX;
+    const py=playerY-camY;
+    this.mouseAngle=Math.atan2(this.mouseY-py-18, this.mouseX-px-9);
+  }
+}
+
+// ============================================================
+// HELPERS
+// ============================================================
+function hexToRgb(hex) {
+  const result=/^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  return result ? {
+    r:parseInt(result[1],16),
+    g:parseInt(result[2],16),
+    b:parseInt(result[3],16)
+  } : {r:255,g:200,b:100};
+}
+
+let promptVisible=false;
+function showPrompt(text) {
+  promptEl.textContent=text;
+  promptEl.style.opacity='1';
+  promptVisible=true;
+}
+function hidePrompt() {
+  promptEl.style.opacity='0';
+  promptVisible=false;
+}
+
+let subtitleTimeout=null;
+function showSubtitle(text, dur=3) {
+  subtitleEl.textContent=text;
+  subtitleEl.style.opacity='1';
+  if(subtitleTimeout) clearTimeout(subtitleTimeout);
+  subtitleTimeout=setTimeout(()=>{ subtitleEl.style.opacity='0'; },dur*1000);
+}
+
+function drawHeartbeat(stress) {
+  const hb=document.getElementById('heartbeat');
+  hb.style.opacity=stress>0.2?Math.min(1,(stress-0.2)*3):0;
+  hbCtx.clearRect(0,0,60,20);
+  hbCtx.strokeStyle=`rgba(180,60,60,${stress})`;
+  hbCtx.lineWidth=1.5;
+  hbCtx.beginPath();
+  const phase=gameTime*stress*10;
+  for(let x=0;x<60;x++) {
+    const t=x/60;
+    let y=10;
+    const p=((t*4+phase)%1);
+    if(p<0.1) y=10-Math.sin(p/0.1*Math.PI)*14*stress;
+    else if(p<0.15) y=10+Math.sin((p-0.1)/0.05*Math.PI)*7*stress;
+    x===0 ? hbCtx.moveTo(x,y) : hbCtx.lineTo(x,y);
+  }
+  hbCtx.stroke();
+}
+
+// ============================================================
+// GAME MAIN
+// ============================================================
+const TILE=48;
+const world=new WorldMap();
+const camera=new Camera();
+const renderer=new Renderer();
+const input=new Input();
+const particles=new ParticleSystem();
+const watcher=new TheWatcher();
+const horror=new HorrorSystem(world);
+
+const player=new Player(TILE*5, -TILE*3);
+
+let lastTime=0;
+let collectedKeys=new Set();
+let unlockedDoors=new Set();
+let dustTimer=0;
+let ambientTimer=0;
+let ambientType=0;
+let started=false;
+
+// Mobile detection
+const isMobile=/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)||window.innerWidth<768;
+if(isMobile) mobileControls.style.display='block';
+
+// ============================================================
+// DUST PARTICLES
+// ============================================================
+function spawnDust() {
+  const camCenterX=camera.screenX+W/2;
+  const camCenterY=camera.screenY+H/2;
+  particles.dust(
+    camCenterX+(Math.random()-0.5)*W*0.8,
+    camCenterY+(Math.random()-0.5)*H*0.6,
+  );
+}
+
+// ============================================================
+// INTERACTION CHECK
+// ============================================================
+function checkInteractions() {
+  const px=player.x; const py=player.y+player.h/2;
+
+  // Keys
+  world.keys.forEach(key=>{
+    if(key.collected) return;
+    const dist=Math.hypot(px-key.x-key.w/2, py-key.y-key.h/2);
+    if(dist<TILE*1.2) {
+      showPrompt('E — pick up key');
+      if(input.interact) {
+        key.collected=true;
+        collectedKeys.add(key.id);
+        audio.bell();
+        input.interact=false;
+        showSubtitle('*you found a key*',2);
+        hidePrompt();
+      }
+    }
+  });
+
+  // Doors
+  world.doors.forEach(door=>{
+    const dist=Math.hypot(px-door.x-door.w/2, py-door.y-door.h/2);
+    if(dist<TILE*1.5) {
+      if(door.locked) {
+        const neededKey=world.keys.find(k=>k.unlocks===door.id);
+        if(neededKey&&collectedKeys.has(neededKey.id)) {
+          showPrompt('E — unlock door');
+          if(input.interact) {
+            door.locked=false;
+            unlockedDoors.add(door.id);
+            audio.creak();
+            audio.bell();
+            input.interact=false;
+            showSubtitle('*door unlocked*',2);
+            hidePrompt();
+          }
+        } else {
+          showPrompt('LOCKED — find a key');
+        }
+      } else {
+        showPrompt('E — open door');
+        if(input.interact) {
+          door.open=!door.open;
+          audio.creak();
+          input.interact=false;
+          hidePrompt();
+        }
+      }
+    }
+  });
+
+  // Signs
+  let nearSign=false;
+  world.signs.forEach(sign=>{
+    const dist=Math.hypot(px-sign.x, py-sign.y);
+    if(dist<TILE*2) nearSign=true;
+  });
+  if(!nearSign && !promptVisible) hidePrompt();
+}
+
+// ============================================================
+// AMBIENT AUDIO LOOP
+// ============================================================
+function updateAmbient(dt) {
+  ambientTimer-=dt;
+  if(ambientTimer<=0) {
+    ambientTimer=Math.random()*8+4;
+    const r=Math.random();
+    if(r<0.3) audio.drip();
+    else if(r<0.5) audio.creak();
+    else if(r<0.65) audio.whisper();
+    else if(r<0.75) audio.noise(60,'sine',1,0.03,-1200);
+    // Ventilation hum
+    audio.drone(55, 0.03);
+  }
+}
+
+// ============================================================
+// MAIN GAME LOOP
+// ============================================================
+function gameLoop(timestamp) {
+  if(!gameRunning) return;
+  requestAnimationFrame(gameLoop);
+
+  const dt=Math.min((timestamp-lastTime)/1000, 0.05);
+  lastTime=timestamp;
+  gameTime+=dt;
+
+  // Update
+  input.updateMouseAngle(player.x+player.w/2, player.y+player.h/2, camera.screenX, camera.screenY);
+  input.interact=false; // reset at start
+  checkInteractions();
+  player.update(input, world.platforms, dt);
+  camera.update(player.x+player.w/2, player.y+player.h/2, dt);
+  horror.update(player, camera, dt, gameTime);
+  watcher.update(player, camera, dt);
+  particles.update(dt);
+  updateAmbient(dt);
+  input.interact=false;
+
+  // Dust spawning
+  dustTimer-=dt;
+  if(dustTimer<=0) { spawnDust(); dustTimer=0.3; }
+
+  // Rain in certain rooms
+  const currentRoom=world.getRoomAt(player.x, player.y);
+
+  // UI
+  flashlightFill.style.width='100%';
+  drawHeartbeat(player.stress);
+
+  // ==================
+  // DRAW
+  // ==================
+  ctx.save();
+
+  const cx=camera.screenX;
+  const cy=camera.screenY;
+
+  // Background
+  renderer.drawBackground(ctx, cx, cy, gameTime);
+
+  // Draw visible rooms
+  world.rooms.forEach(room=>renderer.drawRoom(ctx, room, cx, cy, gameTime));
+
+  // Platforms
+  world.platforms.forEach(p=>renderer.drawPlatform(ctx, p, cx, cy, gameTime));
+
+  // Props
+  world.props.forEach(prop=>renderer.drawProp(ctx, prop, cx, cy, gameTime));
+
+  // Keys
+  world.keys.forEach(key=>renderer.drawKey(ctx, key, cx, cy, gameTime));
+
+  // Doors
+  world.doors.forEach(door=>renderer.drawDoor(ctx, door, cx, cy));
+
+  // Signs
+  world.signs.forEach(sign=>renderer.drawSign(ctx, sign, cx, cy));
+
+  // Watcher entity
+  watcher.draw(ctx, cx, cy, gameTime);
+
+  // Player
+  player.draw(ctx, cx, cy, gameTime);
+
+  // Particles (dust)
+  particles.draw(ctx, cx, cy);
+
+  // Lights
+  ctx.save();
+  ctx.globalCompositeOperation='screen';
+  world.lights.forEach(l=>renderer.drawLight(ctx, l, cx, cy, gameTime));
+  ctx.restore();
+
+  // Darkness overlay with flashlight cutout
+  renderer.drawDarkness(ctx, cx, cy,
+    player.x+player.w/2, player.y+player.h/2,
+    player.flashlightAngle, 200+player.stress*(-60)
+  );
+
+  // Background eyes
+  horror.drawEyes(ctx, cx, cy);
+
+  // Rain
+  renderer.drawRain(ctx, cx, cy, gameTime);
+
+  // Fog layers
+  renderer.drawFog(ctx, cx, cy, gameTime);
+
+  // Vignette
+  renderer.drawVignette(ctx);
+
+  // Film grain
+  renderer.drawFilmGrain(ctx);
+
+  // Screen distortion/glitch
+  horror.drawGlitch(ctx);
+
+  // Chromatic aberration (always subtle)
+  ctx.save();
+  ctx.globalCompositeOperation='screen';
+  ctx.globalAlpha=0.04+player.stress*0.06;
+  ctx.fillStyle='rgba(255,0,0,0.3)';
+  ctx.fillRect(2,0,W,H);
+  ctx.fillStyle='rgba(0,0,255,0.3)';
+  ctx.fillRect(-2,0,W,H);
+  ctx.restore();
+
+  // Room name (on enter)
+  if(currentRoom&&!currentRoom.visited) {
+    currentRoom.visited=true;
+    currentRoom.visitCount++;
+    showSubtitle(currentRoom.name, 3);
+    // Horror on revisit
+    if(currentRoom.visitCount>1&&!currentRoom.anomalyTriggered) {
+      currentRoom.anomalyTriggered=true;
+      setTimeout(()=>{
+        horror.triggerRandomEvent(player,camera);
+        camera.shake(4);
+      }, 1000);
+    }
+  }
+
+  ctx.restore();
+}
+
+// ============================================================
+// RESIZE
+// ============================================================
+window.addEventListener('resize',()=>{
+  W=canvas.width=window.innerWidth;
+  H=canvas.height=window.innerHeight;
+});
+
+// ============================================================
+// START
+// ============================================================
+titleScreen.addEventListener('click',startGame);
+titleScreen.addEventListener('touchstart',startGame,{passive:false});
+
+function startGame(e) {
+  if(started) return;
+  started=true;
+  e.preventDefault();
+  audio.resume();
+
+  // Fade out title
+  titleScreen.style.transition='opacity 2s';
+  titleScreen.style.opacity='0';
+  setTimeout(()=>{ titleScreen.style.display='none'; },2000);
+
+  // Show UI elements
+  document.getElementById('flashlightBar').style.opacity='1';
+
+  // Start ambient drone
+  setTimeout(()=>{
+    audio.drone(58, 0.035);
+    audio.drone(87, 0.02);
+  }, 500);
+
+  // Intro subtitles
+  setTimeout(()=>showSubtitle('You are dreaming.',3),2200);
+  setTimeout(()=>showSubtitle('Find a way out.',3),6000);
+  setTimeout(()=>showSubtitle('It watches.',2),10000);
+
+  // Initial ambient
+  setTimeout(()=>audio.creak(),3500);
+  setTimeout(()=>audio.whisper(),7000);
+
+  gameRunning=true;
+  lastTime=performance.now();
+  requestAnimationFrame(gameLoop);
+}
+
+// Preload grain
+renderer.updateGrain();
+</script>
+</body>
+  </html>
