@@ -97,8 +97,8 @@ const mobEl  = document.getElementById('mob');
 let W = canvas.width  = window.innerWidth;
 let H = canvas.height = window.innerHeight;
 let running = false;
-let gt = 0; // game time
-let lt = 0; // last time
+let gt = 0;
+let lt = 0;
 
 window.addEventListener('resize', () => {
   W = canvas.width  = window.innerWidth;
@@ -161,6 +161,7 @@ const SFX = {
   glitch() { for(let i=0;i<4;i++) setTimeout(()=>playTone(200+Math.random()*2000,'square',0.04,0.06),i*25); },
   scream() { playTone(500,'sawtooth',2.5,0.05,0,-2400); },
   heart()  { playTone(50,'sine',0.15,0.25); setTimeout(()=>playTone(45,'sine',0.1,0.18),160); },
+  _drone: false,
   drone()  {
     try {
       const ac=AC.get();
@@ -183,7 +184,7 @@ function showSub(txt, dur=3) {
   subEl.textContent = txt;
   subEl.style.opacity = '1';
   if(subTO) clearTimeout(subTO);
-  subTO = setTimeout(() => subEl.style.opacity='0', dur*1000);
+  subTO = setTimeout(() => { subEl.style.opacity='0'; }, dur*1000);
 }
 function showProm(txt) { promEl.textContent=txt; promEl.style.opacity='1'; }
 function hideProm()    { promEl.style.opacity='0'; }
@@ -192,7 +193,8 @@ function hideProm()    { promEl.style.opacity='0'; }
 const K = {
   left:false, right:false, up:false, down:false,
   dash:false, interact:false,
-  mx: W/2, my: H/2
+  interactPressed:false,
+  mx: 0, my: 0
 };
 
 document.addEventListener('keydown', e => {
@@ -201,7 +203,7 @@ document.addEventListener('keydown', e => {
   if(e.code==='ArrowUp'||e.code==='KeyW'||e.code==='Space'){ K.up=true; e.preventDefault(); }
   if(e.code==='ArrowDown'  ||e.code==='KeyS')  K.down =true;
   if(e.code==='ShiftLeft'  ||e.code==='ShiftRight') K.dash=true;
-  if(e.code==='KeyE') K.interact=true;
+  if(e.code==='KeyE' && !K.interact){ K.interact=true; K.interactPressed=true; }
 });
 document.addEventListener('keyup', e => {
   if(e.code==='ArrowLeft'  ||e.code==='KeyA')  K.left =false;
@@ -214,19 +216,31 @@ document.addEventListener('keyup', e => {
 document.addEventListener('mousemove', e => { K.mx=e.clientX; K.my=e.clientY; });
 
 // Mobile buttons
-function mbBtn(id, kOn, kOff) {
+function mbBtn(id, kOn) {
   const el = document.getElementById(id);
   if(!el) return;
-  const on  = e => { e.preventDefault(); K[kOn]=true;  if(kOff) K[kOff]=false; };
+  const on  = e => { e.preventDefault(); K[kOn]=true; };
   const off = e => { e.preventDefault(); K[kOn]=false; };
   el.addEventListener('touchstart', on,  {passive:false});
   el.addEventListener('touchend',   off, {passive:false});
   el.addEventListener('mousedown',  on);
   el.addEventListener('mouseup',    off);
 }
-mbBtn('bL','left'); mbBtn('bR','right'); mbBtn('bC','down'); mbBtn('bJ','up'); 
-document.getElementById('bD').addEventListener('touchstart',e=>{e.preventDefault();K.dash=true;},{passive:false});
-document.getElementById('bD').addEventListener('touchend',  e=>{e.preventDefault();K.dash=false;},{passive:false});
+mbBtn('bL','left');
+mbBtn('bR','right');
+mbBtn('bC','down');
+mbBtn('bJ','up');
+
+// FIX: dash button
+const bDEl = document.getElementById('bD');
+bDEl.addEventListener('touchstart', e=>{ e.preventDefault(); K.dash=true;  },{passive:false});
+bDEl.addEventListener('touchend',   e=>{ e.preventDefault(); K.dash=false; },{passive:false});
+bDEl.addEventListener('mousedown',  ()=>K.dash=true);
+bDEl.addEventListener('mouseup',    ()=>K.dash=false);
+
+// FIX: initialise mouse centre so flashlight doesn't start at 0,0
+K.mx = window.innerWidth/2;
+K.my = window.innerHeight/2;
 
 const isMob = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || W < 768;
 if(isMob) mobEl.style.display='block';
@@ -234,34 +248,31 @@ if(isMob) mobEl.style.display='block';
 // ─── TILE & LEVEL ──────────────────────────────────────────
 const T = 48;
 
-// Each platform: {x,y,w,h}
-// Each light:    {x,y,r,col,flk,bright,ft}  ft=flicker timer
-// Each prop:     {type,x,y,w,h,...}
-
 const PLATS = [];
 const LIGHTS = [];
 const PROPS  = [];
-const DOORS  = []; // {x,y,w,h,locked,open,keyColor}
-const KEYS   = []; // {x,y,collected,unlocks_index}
+const DOORS  = [];
+const KEYS   = [];
 const SIGNS  = [];
 
-// ── Room builder helper ─────────────────────────────────────
+// ── Room builder helpers ────────────────────────────────────
 function room(rx,ry,rw,rh) {
-  // floor, ceiling, left wall, right wall
-  PLATS.push({x:rx,       y:ry+rh-T, w:rw,   h:T});   // floor
-  PLATS.push({x:rx,       y:ry,       w:rw,   h:T});   // ceiling
-  PLATS.push({x:rx,       y:ry,       w:T,    h:rh});  // left wall
-  PLATS.push({x:rx+rw-T,  y:ry,       w:T,    h:rh});  // right wall
+  PLATS.push({x:rx,       y:ry+rh-T, w:rw,   h:T});
+  PLATS.push({x:rx,       y:ry,       w:rw,   h:T});
+  PLATS.push({x:rx,       y:ry,       w:T,    h:rh});
+  PLATS.push({x:rx+rw-T,  y:ry,       w:T,    h:rh});
 }
-function ledge(x,y,w,h=T*0.4){ PLATS.push({x,y,w,h}); }
-function light(x,y,r,col='#ffe090',flk=false,bright=0.5){ LIGHTS.push({x,y,r,col,flk,bright,ft:Math.random()*100,fv:1,off:false,ot:0}); }
+function ledge(x,y,w,h){ h=h||T*0.4; PLATS.push({x,y,w,h}); }
+function light(x,y,r,col,flk,bright){ col=col||'#ffe090'; flk=flk||false; bright=bright||0.5; LIGHTS.push({x,y,r,col,flk,bright,ft:Math.random()*100,fv:1,off:false}); }
 function prop(obj){ PROPS.push(obj); }
-function door(x,y,w,h,locked,kc){ DOORS.push({x,y,w,h,locked,open:false,keyColor:kc,gone:false}); }
+// FIX: door() tracks insertion index explicitly
+function door(x,y,w,h,locked,kc){ DOORS.push({x,y,w,h,locked,open:false,keyColor:kc||'',gone:false}); }
+// FIX: key doorIdx must match DOORS array index at time of key() call
 function key(x,y,c,di){ KEYS.push({x,y,w:T*0.7,h:T*0.35,collected:false,color:c,doorIdx:di}); }
 function sign(x,y,txt){ SIGNS.push({x,y,txt}); }
 
 // ─── BUILD WORLD ───────────────────────────────────────────
-// LOBBY
+// LOBBY  (DOORS[0] – unlocked passage, no key needed)
 room(0,-T*9,T*18,T*10);
 light(T*5,-T*6,T*6,'#ffe090',false,0.5);
 light(T*12,-T*6,T*5,'#ffe090',true,0.35);
@@ -272,7 +283,7 @@ prop({type:'clock',x:T*8,y:-T*5.5,w:T*1.2,h:T*1.2});
 sign(T*6,-T*7,'MAIN LOBBY');
 sign(T*16,-T*7,'EAST WING →');
 
-// HALLWAY 1 (right of lobby)
+// HALLWAY 1
 room(T*18,-T*9,T*28,T*10);
 light(T*22,-T*6,T*6,'#ffe090',true,0.4);
 light(T*30,-T*6,T*5,'#ffe090',false,0.4);
@@ -287,7 +298,8 @@ prop({type:'locker',x:T*42,y:-T*8,w:T,h:T*2.5,open:true});
 prop({type:'locker',x:T*43.2,y:-T*8,w:T,h:T*2.5});
 sign(T*19,-T*7,'← LOBBY | EAST →');
 
-// CLASSROOM 1 (above hallway1)
+// CLASSROOM 1 – door index 0
+door(T*26,-T*9.7,T*0.7,T*2.5,false,'');           // DOORS[0] unlocked
 room(T*20,-T*19,T*14,T*10);
 light(T*24,-T*16,T*5,'#ffe090',true,0.4);
 light(T*30,-T*16,T*4,'#ffe090',false,0.35);
@@ -296,12 +308,11 @@ for(let i=0;i<3;i++) prop({type:'chair',x:T*(22.2+i*3),y:-T*11.3,w:T*0.9,h:T*0.7
 prop({type:'blackboard',x:T*22,y:-T*18,w:T*8,h:T*3});
 ledge(T*22,-T*15,T*3,T*0.4);
 sign(T*21,-T*16,'ROOM 101');
-// door connecting hallway1 to classroom1
-door(T*26,-T*9.7,T*0.7,T*2.5,false,'');
-// Key inside classroom1
-key(T*31,-T*10.5,'#c8a030',1); // unlocks door index 1
+// Key inside classroom1 – unlocks DOORS[1] (golden locked door)
+key(T*31,-T*10.5,'#c8a030',1);
 
-// HALLWAY 2 (continues right)
+// HALLWAY 2  – locked golden door = DOORS[1]
+door(T*46,-T*7.5,T*0.7,T*2.5,true,'#c8a030');     // DOORS[1] locked gold
 room(T*46,-T*9,T*22,T*10);
 light(T*50,-T*6,T*6,'#ffe090',false,0.4);
 light(T*60,-T*6,T*5,'#ffe090',true,0.3);
@@ -311,8 +322,6 @@ prop({type:'locker',x:T*47,y:-T*8,w:T,h:T*2.5});
 prop({type:'locker',x:T*48.2,y:-T*8,w:T,h:T*2.5,open:true});
 prop({type:'locker',x:T*64,y:-T*8,w:T,h:T*2.5});
 sign(T*47,-T*7,'← EAST | LIBRARY →');
-// locked door between hallway1 and hallway2
-door(T*46,-T*7.5,T*0.7,T*2.5,true,'#c8a030');
 
 // LIBRARY
 room(T*68,-T*9,T*20,T*12);
@@ -323,12 +332,12 @@ ledge(T*70,-T*3,T*3,T*0.4);
 ledge(T*77,-T*5,T*4,T*0.4);
 ledge(T*83,-T*7,T*3,T*0.4);
 sign(T*70,-T*7,'LIBRARY');
-// Special key in library
-key(T*83,-T*8.5,'#4080c0',3);
+// Blue key in library – unlocks DOORS[2] (flooded room door)
+key(T*83,-T*8.5,'#4080c0',2);
 
 // STAIRCASE DOWN
 room(T*36,-T*9,T*10,T*20);
-for(let i=0;i<5;i++) ledge(T*37+i*T*1.2, -T*5+i*T*2.5, T*2.5, T*0.5);
+for(let i=0;i<5;i++) ledge(T*37+i*T*1.2,-T*5+i*T*2.5,T*2.5,T*0.5);
 light(T*40,-T*5,T*4,'#ff3300',true,0.3);
 sign(T*37,-T*7,'↓ BASEMENT');
 
@@ -346,14 +355,13 @@ prop({type:'pipe',x:T*50,y:T*15,w:T*4,h:T*0.6});
 sign(T*19,T*12,'BASEMENT B1');
 prop({type:'mannequin',x:T*45,y:T*12,w:T,h:T*2.5,facing:-1});
 
-// FLOODED ROOM
+// FLOODED ROOM – door DOORS[2] (blue locked)
+door(T*26,T*11.3,T*2,T*0.7,true,'#4080c0');        // DOORS[2] locked blue
 room(T*18,T*21,T*18,T*12);
 light(T*24,T*24,T*5,'#4060a0',false,0.3);
 ledge(T*21,T*27,T*3,T*0.4);
 ledge(T*29,T*25,T*3,T*0.4);
 sign(T*20,T*22,'FLOODED — B2');
-door(T*26,T*11.3,T*2,T*0.7,true,'#4080c0'); // floor door, index 3
-// locked door between underground and flooded
 prop({type:'blackboard',x:T*19,y:T*21,w:T*5,h:T*2.5});
 
 // GYM
@@ -367,13 +375,13 @@ prop({type:'hoop',x:T*38,y:T*14,w:T*1.5,h:T*5});
 prop({type:'hoop',x:T*63,y:T*14,w:T*1.5,h:T*5});
 sign(T*44,T*12,'GYMNASIUM');
 
-// NURSE OFFICE
+// NURSE OFFICE – door DOORS[3] unlocked
+door(T*68,T*13,T*0.7,T*2.5,false,'');              // DOORS[3] unlocked
 room(T*68,T*11,T*14,T*10);
 light(T*74,T*14,T*5,'#d0ffe0',false,0.45);
 prop({type:'bed',x:T*70,y:T*14,w:T*4,h:T*2});
 prop({type:'cabinet',x:T*78,y:T*14,w:T*2,h:T*3});
 sign(T*70,T*12,"NURSE'S OFFICE");
-door(T*68,T*13,T*0.7,T*2.5,false,'');
 
 // ─── PLAYER ────────────────────────────────────────────────
 const PL = {
@@ -406,7 +414,11 @@ function updatePlayer(dt) {
   const px = PL.x + PL.w/2 - camX;
   const py = PL.y + PL.h/2 - camY;
   const target = Math.atan2(K.my - py, K.mx - px);
-  PL.flashA += (target - PL.flashA) * 0.12 * 60 * dt;
+  // FIX: smooth angle interpolation handles wrap-around correctly
+  let diff = target - PL.flashA;
+  while(diff >  Math.PI) diff -= Math.PI*2;
+  while(diff < -Math.PI) diff += Math.PI*2;
+  PL.flashA += diff * Math.min(1, 0.12 * 60 * dt);
 
   // Dash
   if(K.dash && PL.dashCD <= 0 && !PL.dashing) {
@@ -447,12 +459,13 @@ function updatePlayer(dt) {
   // Wall slide
   if(PL.onWall && !PL.onGround && PL.vy>0) PL.vy=Math.min(PL.vy,110);
 
-  // Move
+  // Move & collide – FIX: separate X and Y passes to avoid corner bugs
   PL.x += PL.vx*dt;
+  resolveCollisionsX();
   PL.y += PL.vy*dt;
-  resolveCollisions();
+  resolveCollisionsY();
 
-  // Crouch
+  // Crouch – FIX: only toggle when state actually changes
   const wantCrouch = K.down && PL.onGround;
   if(wantCrouch && !PL.crouching)  { PL.crouching=true;  PL.h=22; PL.y+=14; }
   if(!wantCrouch && PL.crouching)  { PL.crouching=false; PL.h=36; PL.y-=14; }
@@ -463,12 +476,12 @@ function updatePlayer(dt) {
     if(PL.footT<=0) { SFX.step(); PL.footT=PL.crouching?0.4:0.28; }
   }
 
-  // Anim
+  // Animation
   PL.animT+=dt;
   if(PL.onGround&&Math.abs(PL.vx)>20) { if(PL.animT>0.1){ PL.animF=(PL.animF+1)%4; PL.animT=0; } }
   else PL.animF=0;
 
-  // Stress
+  // Stress / heartbeat
   PL.stress = Math.max(0, PL.stress - dt*0.06);
   if(PL.stress>0) {
     PL.heartT-=dt;
@@ -476,22 +489,34 @@ function updatePlayer(dt) {
   }
 }
 
-function resolveCollisions() {
-  PL.onGround=false; PL.onWall=false; PL.wallDir=0;
+// FIX: Separate X and Y collision resolvers – prevents wall-sticking on floors
+function resolveCollisionsX() {
+  PL.onWall=false; PL.wallDir=0;
   for(const p of PLATS) {
     const ox=(PL.x+PL.w/2)-(p.x+p.w/2);
     const oy=(PL.y+PL.h/2)-(p.y+p.h/2);
     const hw=PL.w/2+p.w/2;
     const hh=PL.h/2+p.h/2;
     if(Math.abs(ox)<hw && Math.abs(oy)<hh) {
-      const dx=hw-Math.abs(ox), dy=hh-Math.abs(oy);
-      if(dx<dy) {
-        PL.x+=ox>0?dx:-dx; PL.vx=0;
-        PL.onWall=true; PL.wallDir=ox>0?-1:1;
-      } else {
-        if(oy<0){ PL.y-=dy; if(PL.vy>0){PL.vy=0;PL.onGround=true;PL.landT=0.15;} }
-        else    { PL.y+=dy; if(PL.vy<0) PL.vy=0; }
-      }
+      const pen=hw-Math.abs(ox);
+      PL.x += ox>0 ? pen : -pen;
+      PL.vx=0;
+      PL.onWall=true; PL.wallDir=ox>0?-1:1;
+    }
+  }
+}
+
+function resolveCollisionsY() {
+  PL.onGround=false;
+  for(const p of PLATS) {
+    const ox=(PL.x+PL.w/2)-(p.x+p.w/2);
+    const oy=(PL.y+PL.h/2)-(p.y+p.h/2);
+    const hw=PL.w/2+p.w/2;
+    const hh=PL.h/2+p.h/2;
+    if(Math.abs(ox)<hw && Math.abs(oy)<hh) {
+      const pen=hh-Math.abs(oy);
+      if(oy<0){ PL.y-=pen; if(PL.vy>0){ PL.vy=0; PL.onGround=true; PL.landT=0.15; } }
+      else    { PL.y+=pen; if(PL.vy<0) PL.vy=0; }
     }
   }
 }
@@ -499,7 +524,7 @@ function resolveCollisions() {
 // ─── CAMERA ────────────────────────────────────────────────
 const camera = {
   x:0, y:0, tx:0, ty:0,
-  si:0, sx:0, sy:0,
+  si:0, sx:0, sy:0,            // FIX: sx/sy initialised to 0
   zoom:1, tz:1,
   update(dt) {
     this.tx = PL.x+PL.w/2 - W/2;
@@ -509,14 +534,16 @@ const camera = {
     this.y += (this.ty-this.y)*lag*60*dt;
     this.zoom += (this.tz-this.zoom)*0.04*60*dt;
     this.si *= Math.pow(0.8,60*dt);
-    if(this.si<0.1) this.si=0;
-    this.sx=(Math.random()-0.5)*this.si;
-    this.sy=(Math.random()-0.5)*this.si;
+    if(this.si<0.1){ this.si=0; this.sx=0; this.sy=0; }
+    else { this.sx=(Math.random()-0.5)*this.si; this.sy=(Math.random()-0.5)*this.si; }
   },
-  shake(i=8) { this.si=Math.max(this.si,i); },
+  shake(i){ i=i||8; this.si=Math.max(this.si,i); },
   zoomIn()  { this.tz=1.08; },
   zoomOut() { this.tz=1; }
 };
+// FIX: seed camera position to player start so first frame isn't jarring
+camera.x = PL.x+PL.w/2 - W/2;
+camera.y = PL.y+PL.h/2 - H/2 + H*0.1;
 
 // ─── HORROR SYSTEM ─────────────────────────────────────────
 const Horror = {
@@ -526,7 +553,7 @@ const Horror = {
   eyes: [],
   mannT: Math.random()*90+60,
   subQueue: [],
-  subT: 0,
+  subT: 99,   // FIX: start high so no phantom subtitle fires on frame 0
 
   update(dt) {
     this.eventT-=dt;
@@ -537,8 +564,9 @@ const Horror = {
 
     if(this.eventT<=0) { this.randomEvent(); this.eventT=Math.random()*18+8; }
     if(this.mannT<=0)  { this.moveMannequin(); this.mannT=Math.random()*80+50; }
-    if(this.subT<=0&&this.subQueue.length>0) {
-      const m=this.subQueue.shift(); showSub(m.t,m.d);
+    if(this.subT<=0 && this.subQueue.length>0) {
+      const m=this.subQueue.shift();
+      showSub(m.t,m.d);
       this.subT=m.d||3;
     }
 
@@ -585,7 +613,7 @@ const Horror = {
     }
   },
 
-  qsub(t,d=3) { this.subQueue.push({t,d}); }
+  qsub(t,d){ d=d||3; this.subQueue.push({t,d}); }
 };
 
 // ─── THE WATCHER ENTITY ────────────────────────────────────
@@ -649,10 +677,11 @@ const Watcher = {
     ctx.save();
     ctx.globalAlpha=this.alpha;
     const wb=Math.sin(this.ap*2)*3;
-    // Body glow (dark)
+    // Body glow
     const g=ctx.createRadialGradient(sx+ww/2,sy+wh/2,4,sx+ww/2,sy+wh/2,wh*0.7);
     g.addColorStop(0,'rgba(0,0,0,0.95)'); g.addColorStop(1,'rgba(0,0,0,0)');
     ctx.fillStyle=g;
+    ctx.beginPath();   // FIX: beginPath before ellipse
     ctx.ellipse(sx+ww/2,sy+wh/2,ww,wh/2,0,0,Math.PI*2); ctx.fill();
     // Torso
     ctx.fillStyle='rgba(2,2,10,0.97)';
@@ -686,13 +715,14 @@ const PARTS=[];
 let dustT=0;
 function spawnDust() {
   const cx=camera.x+W/2, cy=camera.y+H/2;
-  PARTS.push({
+  const p = {
     x:cx+(Math.random()-0.5)*W*0.9,
     y:cy+(Math.random()-0.5)*H*0.7,
     vx:(Math.random()-0.5)*6, vy:-Math.random()*4-0.5,
-    life:Math.random()*4+2, ml:0, s:Math.random()*1.5+0.3
-  });
-  PARTS[PARTS.length-1].ml=PARTS[PARTS.length-1].life;
+    s:Math.random()*1.5+0.3
+  };
+  p.life = p.ml = Math.random()*4+2;
+  PARTS.push(p);
 }
 
 // ─── RENDER HELPERS ────────────────────────────────────────
@@ -708,30 +738,32 @@ const grainX=grainC.getContext('2d');
 let grainTick=0;
 function updateGrain() {
   const d=grainX.createImageData(256,256);
-  for(let i=0;i<d.data.length;i+=4){ const v=Math.random()*45; d.data[i]=d.data[i+1]=d.data[i+2]=v; d.data[i+3]=Math.random()*28+8; }
+  for(let i=0;i<d.data.length;i+=4){
+    const v=Math.random()*45;
+    d.data[i]=d.data[i+1]=d.data[i+2]=v;
+    d.data[i+3]=Math.random()*28+8;
+  }
   grainX.putImageData(d,0,0);
 }
 updateGrain();
 
-// Fog
+// Fog layers
 const fogL=[{x:0,sp:0.15,al:0.1},{x:400,sp:0.07,al:0.08},{x:-300,sp:0.2,al:0.07}];
 
 // ─── DRAW ROUTINES ─────────────────────────────────────────
 function drawBG(cx,cy) {
   ctx.fillStyle='#06060e';
   ctx.fillRect(0,0,W,H);
-  // subtle far-bg columns
   ctx.fillStyle='rgba(10,11,20,0.95)';
   for(let i=-1;i<W/160+2;i++) {
-    const bx=i*170-(cx*0.07)%170;
+    const bx=i*170-((cx*0.07)%170);
     ctx.fillRect(bx,H*0.5,150,H*0.5);
   }
 }
 
 function drawPlatform(p,cx,cy) {
   const px=p.x-cx, py=p.y-cy;
-  const colors={'default':'#1e2030','pipe':'#1a2a18'};
-  ctx.fillStyle=p.type?colors[p.type]||'#1e2030':'#1e2030';
+  ctx.fillStyle='#1e2030';
   ctx.fillRect(px,py,p.w,p.h);
   ctx.fillStyle='rgba(55,60,85,0.25)'; ctx.fillRect(px,py,p.w,1);
   ctx.fillStyle='rgba(0,0,0,0.5)';     ctx.fillRect(px,py+p.h-1,p.w,1);
@@ -739,8 +771,11 @@ function drawPlatform(p,cx,cy) {
 
 function drawLight(l,cx,cy) {
   if(l.off) return;
-  // Flicker
-  if(l.flk){ l.ft+=0.06; l.fv=0.65+Math.sin(l.ft*8)*0.18+Math.sin(l.ft*13)*0.1; if(Math.random()<0.006) l.fv=Math.random()*0.3; }
+  if(l.flk){
+    l.ft+=0.06;
+    l.fv=0.65+Math.sin(l.ft*8)*0.18+Math.sin(l.ft*13)*0.1;
+    if(Math.random()<0.006) l.fv=Math.random()*0.3;
+  }
   const fv=l.flk?l.fv:1;
   const lx=l.x-cx, ly=l.y-cy;
   const r=l.r*fv, intense=l.bright*fv;
@@ -757,6 +792,21 @@ function drawLight(l,cx,cy) {
   // Fixture dot
   ctx.fillStyle=`rgba(${rgb.r},${rgb.g},${rgb.b},${Math.min(1,intense*1.5)})`;
   ctx.fillRect(lx-4,ly-3,8,3);
+}
+
+// FIX: roundRect polyfill for browsers that don't support it
+function roundRectFill(x,y,w,h,r) {
+  if(ctx.roundRect) {
+    ctx.beginPath(); ctx.roundRect(x,y,w,h,r); ctx.fill();
+  } else {
+    ctx.beginPath();
+    ctx.moveTo(x+r,y);
+    ctx.lineTo(x+w-r,y); ctx.quadraticCurveTo(x+w,y,x+w,y+r);
+    ctx.lineTo(x+w,y+h-r); ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+    ctx.lineTo(x+r,y+h); ctx.quadraticCurveTo(x,y+h,x,y+h-r);
+    ctx.lineTo(x,y+r); ctx.quadraticCurveTo(x,y,x+r,y);
+    ctx.closePath(); ctx.fill();
+  }
 }
 
 function drawProp(p,cx,cy) {
@@ -791,7 +841,7 @@ function drawProp(p,cx,cy) {
         while(bx<px+p.w-3) {
           const bw=7+Math.floor(Math.sin(bx*13)*3+3);
           const cs=['#3a1a1a','#1a2a3a','#2a3a1a','#3a3a1a','#2a1a3a'];
-          ctx.fillStyle=cs[(bx*7+sh*3)%cs.length];
+          ctx.fillStyle=cs[((bx*7+sh*3)%cs.length+cs.length)%cs.length];
           ctx.fillRect(bx,sy+1,bw,p.h*0.22);
           bx+=bw+1;
         }
@@ -803,19 +853,14 @@ function drawProp(p,cx,cy) {
       else ctx.translate(px,py);
       const mw=p.w, mh=p.h;
       ctx.fillStyle='#bdb5a5';
-      // head
       ctx.beginPath(); ctx.ellipse(mw/2,mh*0.09,mw*0.24,mh*0.1,0,0,Math.PI*2); ctx.fill();
-      // torso
       ctx.beginPath();
       ctx.moveTo(mw*0.22,mh*0.19); ctx.lineTo(mw*0.78,mh*0.19);
       ctx.lineTo(mw*0.68,mh*0.56); ctx.lineTo(mw*0.32,mh*0.56); ctx.closePath(); ctx.fill();
-      // arms
       ctx.fillRect(mw*0.78,mh*0.21,mw*0.55,mh*0.04);
       ctx.fillRect(-mw*0.33,mh*0.21,mw*0.55,mh*0.04);
-      // legs
       ctx.fillRect(mw*0.28,mh*0.56,mw*0.14,mh*0.44);
       ctx.fillRect(mw*0.58,mh*0.56,mw*0.14,mh*0.44);
-      // creepy blank face
       ctx.fillStyle='rgba(0,0,0,0.25)';
       ctx.beginPath(); ctx.arc(mw*0.4,mh*0.08,2.5,0,Math.PI*2); ctx.fill();
       ctx.beginPath(); ctx.arc(mw*0.6,mh*0.08,2.5,0,Math.PI*2); ctx.fill();
@@ -852,7 +897,9 @@ function drawProp(p,cx,cy) {
     case 'pipe':
       ctx.fillStyle='#182018'; ctx.fillRect(px,py,p.w,p.h);
       ctx.strokeStyle='rgba(35,65,35,0.4)'; ctx.lineWidth=1;
-      for(let i=0;i<p.w;i+=T*0.8){ ctx.beginPath(); ctx.moveTo(px+i,py); ctx.lineTo(px+i,py+p.h); ctx.stroke(); }
+      for(let i=0;i<p.w;i+=T*0.8){
+        ctx.beginPath(); ctx.moveTo(px+i,py); ctx.lineTo(px+i,py+p.h); ctx.stroke();
+      }
       break;
     case 'hoop':
       ctx.strokeStyle='rgba(90,80,50,0.5)'; ctx.lineWidth=3; ctx.lineCap='round';
@@ -885,8 +932,7 @@ function drawKey(k,cx,cy) {
   const kx=k.x-cx, ky=k.y-cy;
   const bob=Math.sin(gt*2.2)*3;
   ctx.save();
-  ctx.translate(kx+k.w/2,ky+k.h/2+bob);
-  // glow
+  ctx.translate(kx+k.w/2, ky+k.h/2+bob);
   ctx.globalCompositeOperation='screen';
   const rgb=hexRGB(k.color);
   const g=ctx.createRadialGradient(0,0,1,0,0,22);
@@ -921,17 +967,19 @@ function drawPlayer(cx,cy) {
   // shadow
   const sg=ctx.createRadialGradient(0,PL.h/2+2,1,0,PL.h/2+2,PL.w*1.6);
   sg.addColorStop(0,'rgba(0,0,0,0.5)'); sg.addColorStop(1,'rgba(0,0,0,0)');
-  ctx.fillStyle=sg; ctx.scale(1,0.4); ctx.beginPath(); ctx.arc(0,PL.h*1.3,PL.w*1.5,0,Math.PI*2); ctx.fill(); ctx.scale(1,2.5);
+  ctx.fillStyle=sg;
+  ctx.save(); ctx.scale(1,0.4);
+  ctx.beginPath(); ctx.arc(0,PL.h*1.3,PL.w*1.5,0,Math.PI*2); ctx.fill();
+  ctx.restore();
 
-  // run offset
-  const ro=PL.onGround&&Math.abs(PL.vx)>20?Math.sin(PL.animF*Math.PI/2)*2.5:0;
-  // coat
+  // coat – FIX: use polyfill instead of native roundRect
   ctx.fillStyle='#181828';
-  ctx.beginPath(); ctx.roundRect(-PL.w/2,-PL.h/2+ro*0.3,PL.w,PL.h*0.65,[3,3,0,0]); ctx.fill();
+  roundRectFill(-PL.w/2,-PL.h/2,PL.w,PL.h*0.65,[3,3,0,0]);
+
   // legs
   ctx.fillStyle='#100e1e';
   if(PL.onGround&&Math.abs(PL.vx)>20) {
-    const lr=Math.sin((gt*10))*(PL.crouching?4:8);
+    const lr=Math.sin(gt*10)*(PL.crouching?4:8);
     ctx.fillRect(-PL.w/2+1,-PL.h/2+PL.h*0.56,PL.w/2-1,PL.h*0.44+lr*0.25);
     ctx.fillRect(1,-PL.h/2+PL.h*0.56,PL.w/2-1,PL.h*0.44-lr*0.25);
   } else {
@@ -964,7 +1012,7 @@ function drawDarkness(cx,cy) {
   ctx.globalCompositeOperation='destination-out';
   const fx=PL.x+PL.w/2-cx, fy=PL.y+PL.h/2-cy;
   const spread=Math.PI/4.2;
-  const radius=195-PL.stress*55;
+  const radius=Math.max(60, 195-PL.stress*55);
   const cg=ctx.createRadialGradient(fx,fy,4,fx,fy,radius);
   cg.addColorStop(0,'rgba(0,0,0,1)');
   cg.addColorStop(0.55,'rgba(0,0,0,0.85)');
@@ -978,21 +1026,26 @@ function drawFog(cx,cy) {
   ctx.save(); ctx.globalCompositeOperation='screen';
   fogL.forEach(f=>{
     f.x+=f.sp;
-    const fx=(f.x-cx*f.sp*1.8)%W;
-    const fy=H*0.65-cy*0.04;
+    // FIX: stable parallax – no camera-multiplied jitter
+    const fx=((f.x - cx*0.04)%W + W*2)%W - W*0.5;
+    const fy=H*0.65;
     const g=ctx.createLinearGradient(fx,fy,fx+W*1.5,fy+55);
     g.addColorStop(0,'rgba(0,0,0,0)');
     g.addColorStop(0.35,`rgba(12,18,28,${f.al})`);
     g.addColorStop(0.65,`rgba(8,14,22,${f.al*0.6})`);
     g.addColorStop(1,'rgba(0,0,0,0)');
-    ctx.fillStyle=g; ctx.fillRect(fx-200,fy,W*2,58); ctx.fillRect(fx-200+W,fy,W*2,58);
+    ctx.fillStyle=g;
+    ctx.fillRect(fx-200,fy,W*2,58);
+    ctx.fillRect(fx-200+W,fy,W*2,58);
   });
   ctx.restore();
 }
 
 function drawVignette() {
   const g=ctx.createRadialGradient(W/2,H/2,H*0.22,W/2,H/2,H*0.88);
-  g.addColorStop(0,'rgba(0,0,0,0)'); g.addColorStop(0.5,'rgba(0,0,0,0.08)'); g.addColorStop(1,'rgba(0,0,0,0.72)');
+  g.addColorStop(0,'rgba(0,0,0,0)');
+  g.addColorStop(0.5,'rgba(0,0,0,0.08)');
+  g.addColorStop(1,'rgba(0,0,0,0.72)');
   ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
 }
 
@@ -1033,7 +1086,7 @@ function drawEyes(cx,cy) {
   });
 }
 
-function drawRain(cx,cy) {
+function drawRain() {
   ctx.save(); ctx.strokeStyle='rgba(70,100,130,0.22)'; ctx.lineWidth=0.7;
   for(let i=0;i<35;i++) {
     const rx=(i*139+gt*210)%W, ry=(i*97+gt*190)%H;
@@ -1043,45 +1096,46 @@ function drawRain(cx,cy) {
 }
 
 // ─── INTERACTIONS ──────────────────────────────────────────
-let promptClear=true;
 function checkInteract() {
   let near=false;
-  const px=PL.x+PL.w/2, py=PL.y+PL.h;
+  // FIX: use player centre for distance checks, not feet
+  const px=PL.x+PL.w/2, py=PL.y+PL.h/2;
 
   KEYS.forEach(k=>{
     if(k.collected) return;
-    const d=Math.hypot(px-k.x-k.w/2,py-k.y);
-    if(d<T*1.3) {
+    const d=Math.hypot(px-(k.x+k.w/2), py-(k.y+k.h/2));
+    if(d<T*1.5) {
       near=true; showProm('E — pick up key');
-      if(K.interact) {
+      if(K.interactPressed) {
         k.collected=true;
         SFX.bell();
         showSub('*you found a key*',2);
-        K.interact=false;
       }
     }
   });
 
   DOORS.forEach((d,i)=>{
-    const d2=Math.hypot(px-d.x-d.w/2,py-d.y-d.h/2);
+    const d2=Math.hypot(px-(d.x+d.w/2), py-(d.y+d.h/2));
     if(d2<T*1.8) {
       near=true;
       if(d.locked) {
-        const k=KEYS.find(k=>k.doorIdx===i);
-        if(k&&k.collected) {
+        const matchKey=KEYS.find(k=>k.doorIdx===i);
+        if(matchKey && matchKey.collected) {
           showProm('E — unlock door');
-          if(K.interact) { d.locked=false; SFX.creak(); SFX.bell(); showSub('*door unlocked*',2); K.interact=false; }
+          if(K.interactPressed) { d.locked=false; SFX.creak(); SFX.bell(); showSub('*door unlocked*',2); }
         } else {
           showProm('LOCKED');
         }
       } else {
-        showProm('E — open door');
-        if(K.interact) { d.open=!d.open; SFX.creak(); K.interact=false; }
+        showProm('E — open/close door');
+        if(K.interactPressed) { d.open=!d.open; SFX.creak(); }
       }
     }
   });
 
   if(!near) hideProm();
+  // FIX: clear interact pulse after all checks so every system sees it
+  K.interactPressed=false;
 }
 
 // ─── AMBIENT ───────────────────────────────────────────────
@@ -1102,30 +1156,28 @@ function updateAmbient(dt) {
 function loop(ts) {
   if(!running) return;
   requestAnimationFrame(loop);
-  const dt=Math.min((ts-lt)/1000,0.05);
+  const dt=Math.min((ts-lt)/1000, 0.05);
   lt=ts; gt+=dt;
 
-  // Update
   updatePlayer(dt);
   camera.update(dt);
   Horror.update(dt);
   Watcher.update(dt);
   updateAmbient(dt);
-  checkInteract();
-  K.interact=false;
+  checkInteract();   // FIX: interactPressed cleared inside checkInteract, not here
 
   // Dust
   dustT-=dt;
   if(dustT<=0){ spawnDust(); dustT=0.28; }
   for(const p of PARTS){ p.x+=p.vx*dt; p.y+=p.vy*dt; p.vy-=0.4*dt; p.life-=dt; }
-  PARTS.splice(0,PARTS.length,...PARTS.filter(p=>p.life>0));
+  PARTS.splice(0, PARTS.length, ...PARTS.filter(p=>p.life>0));
 
   // Draw
   const cx=camera.x+camera.sx;
   const cy=camera.y+camera.sy;
 
   ctx.save();
-  if(camera.zoom!==1) {
+  if(Math.abs(camera.zoom-1)>0.001) {
     ctx.translate(W/2,H/2);
     ctx.scale(camera.zoom,camera.zoom);
     ctx.translate(-W/2,-H/2);
@@ -1142,24 +1194,28 @@ function loop(ts) {
 
   // Dust particles
   ctx.save();
-  PARTS.forEach(p=>{ const a=Math.max(0,p.life/p.ml)*0.5; ctx.globalAlpha=a; ctx.fillStyle='rgba(170,175,155,0.6)'; ctx.beginPath(); ctx.arc(p.x-cx,p.y-cy,p.s,0,Math.PI*2); ctx.fill(); });
+  PARTS.forEach(p=>{
+    const a=Math.max(0,p.life/p.ml)*0.5;
+    ctx.globalAlpha=a;
+    ctx.fillStyle='rgba(170,175,155,0.6)';
+    ctx.beginPath(); ctx.arc(p.x-cx,p.y-cy,p.s,0,Math.PI*2); ctx.fill();
+  });
   ctx.restore();
 
-  // Lights (screen blend)
+  // Lights
   ctx.save(); ctx.globalCompositeOperation='screen';
   LIGHTS.forEach(l=>drawLight(l,cx,cy));
   ctx.restore();
 
-  // Darkness & flashlight
   drawDarkness(cx,cy);
   drawEyes(cx,cy);
-  drawRain(cx,cy);
+  drawRain();
   drawFog(cx,cy);
   drawVignette();
   drawFilmGrain();
   drawGlitch();
 
-  // Subtle chromatic aberration always on
+  // Chromatic aberration
   ctx.save();
   ctx.globalCompositeOperation='screen';
   ctx.globalAlpha=0.03+PL.stress*0.05;
@@ -1179,21 +1235,21 @@ function startGame(e) {
 
   titleEl.style.transition='opacity 2s';
   titleEl.style.opacity='0';
-  setTimeout(()=>titleEl.style.display='none',2000);
+  setTimeout(()=>titleEl.style.display='none', 2000);
 
-  setTimeout(()=>{ try{ SFX.drone(); }catch(e){} },600);
-  setTimeout(()=>showSub('أنت في حلم.',3),2300);
-  setTimeout(()=>showSub('ابحث عن مخرج.',3),6200);
-  setTimeout(()=>showSub('إنه يراقبك.',2.5),10500);
-  setTimeout(()=>SFX.creak(),3800);
+  setTimeout(()=>{ try{ SFX.drone(); }catch(e){} }, 600);
+  setTimeout(()=>showSub('أنت في حلم.',3),  2300);
+  setTimeout(()=>showSub('ابحث عن مخرج.',3), 6200);
+  setTimeout(()=>showSub('إنه يراقبك.',2.5), 10500);
+  setTimeout(()=>SFX.creak(),  3800);
   setTimeout(()=>SFX.whisper(),7500);
 
   lt=performance.now();
   requestAnimationFrame(loop);
 }
 
-titleEl.addEventListener('click',   startGame);
+titleEl.addEventListener('click',      startGame);
 titleEl.addEventListener('touchstart', startGame, {passive:false});
 </script>
 </body>
-  </html>
+                              </html>
